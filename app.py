@@ -69,7 +69,6 @@ def gerar_modelo_base_vazio():
     ws = wb.active
     ws.title = "Base"
     
-    # Alterado de "Origem" para "Nome da Região"
     headers = [
         "Nome da Região", "Destino", "UF Destino", "Prazo", "Codigo IBGE", 
         "DOMINGO", "SEGUNDA", "TERÇA", "QUARTA", "QUINTA", 
@@ -231,17 +230,16 @@ def processar_prazos(file_destino, file_base):
     output.seek(0)
     return output, cidades_atualizadas
 
-def processar_regiao(cnpj, escolha, nome_transportadora, file_base, file_modelo):
+def processar_regiao(cnpj, file_base, file_modelo):
     df_prazos = pd.read_excel(file_base, sheet_name='Base')
     
-    # Atualizado de 'Origem' para 'Nome da Região'
+    # Limpa e filtra o campo "Nome da Região"
     df_prazos['Nome da Região'] = df_prazos['Nome da Região'].astype(str).str.strip()
     df_prazos = df_prazos[df_prazos['Nome da Região'].notna() & (df_prazos['Nome da Região'].str.upper() != 'NAN') & (df_prazos['Nome da Região'] != '')]
     df_prazos = df_prazos.drop_duplicates(subset=['Nome da Região', 'Codigo IBGE', 'Prazo'])
     
-    if escolha == '1': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"{row['Nome da Região'].upper()}", axis=1)
-    elif escolha == '2': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"Prazos | {row['Nome da Região'].upper()} - {nome_transportadora}", axis=1)
-    elif escolha == '3': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"Região {row['Nome da Região'].upper()} {nome_transportadora}", axis=1)
+    # Define o NomeRegiao exatamente como consta na coluna da planilha
+    df_prazos['NomeRegiao'] = df_prazos['Nome da Região'].str.upper()
     
     wb_modelo = load_workbook(file_modelo)
     ws_regioes = wb_modelo['regioes']
@@ -356,6 +354,7 @@ with st.sidebar:
     st.divider()
     
     cnpj_global = st.text_input("CNPJ Transportadora Padrão", help="Usado nas ferramentas de Região e Rotas")
+    nome_global = st.text_input("Nome Transportadora Padrão", help="Usado para dar nome automático aos arquivos baixados")
     
     if st.button("Atualizar Cache IBGE", use_container_width=True):
         with st.spinner("Buscando dados da API..."):
@@ -414,9 +413,6 @@ with tab3:
     
     file_base_reg = st.file_uploader("Base de Prazos", type=["xlsx"], key="reg_base")
     
-    tipo_regiao = st.selectbox("Configuração", ["1: Faixa de Km", "2: Prazos", "3: Frete"])
-    nome_transp_reg = st.text_input("Nome da Transportadora (Para opções 2 e 3)")
-    
     if file_base_reg and st.button("Criar Regiões"):
         if not cnpj_global:
             st.warning("⚠️ Preencha o CNPJ no menu lateral (Configuração).")
@@ -425,14 +421,24 @@ with tab3:
         else:
             with st.spinner(f"Extraindo dados do banco ({ARQUIVO_MODELO_REGIAO})..."):
                 try:
-                    out_bytes = processar_regiao(cnpj_global, tipo_regiao.split(":")[0], nome_transp_reg, file_base_reg, ARQUIVO_MODELO_REGIAO)
+                    out_bytes = processar_regiao(cnpj_global, file_base_reg, ARQUIVO_MODELO_REGIAO)
                     st.session_state['out_regiao'] = out_bytes
-                    st.success("✅ Regiões criadas com sucesso usando a estrutura do repositório!")
+                    
+                    # Salva o nome sugerido para o arquivo usando a Transportadora Padrão
+                    nome_sugerido = f"Regioes_{nome_global.strip()}.xlsx" if nome_global.strip() else "Modelo_Regioes_Preenchido.xlsx"
+                    st.session_state['nome_arq_regiao'] = nome_sugerido
+                    
+                    st.success("✅ Regiões criadas com sucesso usando o nome padrão da tabela!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
                     
     if 'out_regiao' in st.session_state:
-        st.download_button("📥 Baixar Regiões", data=st.session_state['out_regiao'], file_name="Modelo_Regioes_Preenchido.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            label="📥 Baixar Regiões", 
+            data=st.session_state['out_regiao'], 
+            file_name=st.session_state.get('nome_arq_regiao', 'Modelo_Regioes_Preenchido.xlsx'), 
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # --- ABA 4: Gerar Rotas ---
 with tab4:
@@ -446,7 +452,7 @@ with tab4:
     col1, col2 = st.columns(2)
     tipo_rota = col1.selectbox("Dados da Rota", ["1: ROTA - PRAZO", "2: (TRANS) (ORIGEM)"])
     cnpj_rota = col2.text_input("CNPJ Transportadora (se difere do padrão)", value=cnpj_global)
-    nome_transp_rota = col1.text_input("Nome Transportadora")
+    nome_transp_rota = col1.text_input("Nome Transportadora", value=nome_global) # Puxa do lateral por padrão
     desc_rota = col2.text_input("Desc. Adicional (Opcional)")
     ibge_orig = st.text_input("IBGE Origem")
     
@@ -460,12 +466,22 @@ with tab4:
                 try:
                     out_bytes = processar_rotas(tipo_rota.split(":")[0], cnpj_rota, nome_transp_rota.upper(), desc_rota.upper(), ibge_orig, file_modelo_regioes, ARQUIVO_MODELO_ROTA)
                     st.session_state['out_rotas'] = out_bytes
+                    
+                    # Salva o nome sugerido para o arquivo da Rota
+                    nome_sugerido_rota = f"Rotas_{nome_transp_rota.strip()}.xlsx" if nome_transp_rota.strip() else "Rotas_Preenchidas.xlsx"
+                    st.session_state['nome_arq_rota'] = nome_sugerido_rota
+                    
                     st.success("✅ Rotas estruturadas com sucesso dentro do modelo original!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
                     
     if 'out_rotas' in st.session_state:
-        st.download_button("📥 Baixar Planilha de Rotas Preenchida", data=st.session_state['out_rotas'], file_name="Rotas_Preenchidas.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            label="📥 Baixar Planilha de Rotas Preenchida", 
+            data=st.session_state['out_rotas'], 
+            file_name=st.session_state.get('nome_arq_rota', 'Rotas_Preenchidas.xlsx'), 
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # --- ABA 5: Converter S/N ---
 with tab5:
