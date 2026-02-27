@@ -14,6 +14,9 @@ import io
 st.set_page_config(page_title="Ferramentas Logísticas", page_icon="📦", layout="wide")
 
 CAMINHO_CACHE_IBGE = 'municipios_ibge_cache.json'
+ARQUIVO_MODELO_REGIAO = 'Modelo Região.xlsx'
+ARQUIVO_MODELO_ROTA = 'Modelo Rota.xlsx'
+
 NOME_ABA = 'Base'
 COL_CIDADE = 'Destino'
 COL_UF = 'UF Destino'
@@ -79,7 +82,7 @@ def gerar_modelo_base_vazio():
     return output
 
 # =============================================================================
-# LÓGICA DE NEGÓCIO (ADAPTADA PARA BYTESIO)
+# LÓGICA DE NEGÓCIO
 # =============================================================================
 
 def processar_ibge(file):
@@ -272,7 +275,7 @@ def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc
     if not regioes_encontradas:
         raise Exception("Nenhuma região encontrada no modelo de regiões.")
         
-    # Carregando o template "rota.xlsx" original que o usuário fez upload
+    # Carregando o template "rota.xlsx" original do repositório
     wb_rotas = load_workbook(file_template_rota)
     
     if "Rotas" in wb_rotas.sheetnames:
@@ -405,22 +408,23 @@ with tab2:
 # --- ABA 3: Criar Região ---
 with tab3:
     st.markdown("### Criar Regiões")
-    col1, col2 = st.columns(2)
-    file_base_reg = col1.file_uploader("Base de Prazos", type=["xlsx"], key="reg_base")
-    file_modelo_reg = col2.file_uploader("Modelo de Região", type=["xlsx"], key="reg_mod")
+    
+    file_base_reg = st.file_uploader("Base de Prazos", type=["xlsx"], key="reg_base")
     
     tipo_regiao = st.selectbox("Configuração", ["1: Faixa de Km", "2: Prazos", "3: Frete"])
     nome_transp_reg = st.text_input("Nome da Transportadora (Para opções 2 e 3)")
     
-    if file_base_reg and file_modelo_reg and st.button("Criar Regiões"):
+    if file_base_reg and st.button("Criar Regiões"):
         if not cnpj_global:
             st.warning("⚠️ Preencha o CNPJ no menu lateral (Configuração).")
+        elif not os.path.exists(ARQUIVO_MODELO_REGIAO):
+            st.error(f"⚠️ O arquivo original '{ARQUIVO_MODELO_REGIAO}' não foi encontrado na pasta do projeto!")
         else:
-            with st.spinner("Estruturando regiões..."):
+            with st.spinner(f"Extraindo dados do banco ({ARQUIVO_MODELO_REGIAO})..."):
                 try:
-                    out_bytes = processar_regiao(cnpj_global, tipo_regiao.split(":")[0], nome_transp_reg, file_base_reg, file_modelo_reg)
+                    out_bytes = processar_regiao(cnpj_global, tipo_regiao.split(":")[0], nome_transp_reg, file_base_reg, ARQUIVO_MODELO_REGIAO)
                     st.session_state['out_regiao'] = out_bytes
-                    st.success("✅ Regiões criadas!")
+                    st.success("✅ Regiões criadas com sucesso usando a estrutura do repositório!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
                     
@@ -431,11 +435,8 @@ with tab3:
 with tab4:
     st.markdown("### Gerar Rotas")
     
-    colA, colB = st.columns(2)
-    # Primeiro arquivo (De onde ele tira as regiões)
-    file_modelo_regioes = colA.file_uploader("1. Modelo de Região (Já preenchido)", type=["xlsx"], key="rota_mod_reg")
-    # Segundo arquivo (O modelo rota.xlsx original)
-    file_template_rota = colB.file_uploader("2. Modelo de Rota (rota.xlsx a preencher)", type=["xlsx"], key="rota_mod_rota")
+    # Recebe a planilha gerada na etapa 3
+    file_modelo_regioes = st.file_uploader("1. Modelo de Região (Já preenchido no passo anterior)", type=["xlsx"], key="rota_mod_reg")
     
     st.divider()
     
@@ -446,15 +447,17 @@ with tab4:
     desc_rota = col2.text_input("Desc. Adicional (Opcional)")
     ibge_orig = st.text_input("IBGE Origem")
     
-    if file_modelo_regioes and file_template_rota and st.button("Gerar Rotas"):
+    if file_modelo_regioes and st.button("Gerar Rotas"):
         if not cnpj_rota or not ibge_orig:
             st.warning("⚠️ CNPJ e IBGE Origem são obrigatórios.")
+        elif not os.path.exists(ARQUIVO_MODELO_ROTA):
+            st.error(f"⚠️ O arquivo original '{ARQUIVO_MODELO_ROTA}' não foi encontrado na pasta do projeto!")
         else:
-            with st.spinner("Gerando rotas dentro do modelo de rotas..."):
+            with st.spinner(f"Gerando rotas baseadas no banco ({ARQUIVO_MODELO_ROTA})..."):
                 try:
-                    out_bytes = processar_rotas(tipo_rota.split(":")[0], cnpj_rota, nome_transp_rota.upper(), desc_rota.upper(), ibge_orig, file_modelo_regioes, file_template_rota)
+                    out_bytes = processar_rotas(tipo_rota.split(":")[0], cnpj_rota, nome_transp_rota.upper(), desc_rota.upper(), ibge_orig, file_modelo_regioes, ARQUIVO_MODELO_ROTA)
                     st.session_state['out_rotas'] = out_bytes
-                    st.success("✅ Rotas estruturadas com sucesso dentro do modelo!")
+                    st.success("✅ Rotas estruturadas com sucesso dentro do modelo original!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
                     
