@@ -64,13 +64,14 @@ def API_Atualizar_Cache_IBGE():
         return False
 
 def gerar_modelo_base_vazio():
-    """Gera o modelo 'Base de Origem' apenas com os cabeçalhos, sempre vazio."""
+    """Gera o modelo 'Base' apenas com os cabeçalhos, sempre vazio."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Base"
     
+    # Alterado de "Origem" para "Nome da Região"
     headers = [
-        "Origem", "Destino", "UF Destino", "Prazo", "Codigo IBGE", 
+        "Nome da Região", "Destino", "UF Destino", "Prazo", "Codigo IBGE", 
         "DOMINGO", "SEGUNDA", "TERÇA", "QUARTA", "QUINTA", 
         "SEXTA", "SABADO", "FREQUENCIA"
     ]
@@ -232,13 +233,15 @@ def processar_prazos(file_destino, file_base):
 
 def processar_regiao(cnpj, escolha, nome_transportadora, file_base, file_modelo):
     df_prazos = pd.read_excel(file_base, sheet_name='Base')
-    df_prazos['Origem'] = df_prazos['Origem'].astype(str).str.strip()
-    df_prazos = df_prazos[df_prazos['Origem'].notna() & (df_prazos['Origem'].str.upper() != 'NAN') & (df_prazos['Origem'] != '')]
-    df_prazos = df_prazos.drop_duplicates(subset=['Origem', 'Codigo IBGE', 'Prazo'])
     
-    if escolha == '1': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"{row['Origem'].upper()}", axis=1)
-    elif escolha == '2': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"Prazos | {row['Origem'].upper()} - {nome_transportadora}", axis=1)
-    elif escolha == '3': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"Região {row['Origem'].upper()} {nome_transportadora}", axis=1)
+    # Atualizado de 'Origem' para 'Nome da Região'
+    df_prazos['Nome da Região'] = df_prazos['Nome da Região'].astype(str).str.strip()
+    df_prazos = df_prazos[df_prazos['Nome da Região'].notna() & (df_prazos['Nome da Região'].str.upper() != 'NAN') & (df_prazos['Nome da Região'] != '')]
+    df_prazos = df_prazos.drop_duplicates(subset=['Nome da Região', 'Codigo IBGE', 'Prazo'])
+    
+    if escolha == '1': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"{row['Nome da Região'].upper()}", axis=1)
+    elif escolha == '2': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"Prazos | {row['Nome da Região'].upper()} - {nome_transportadora}", axis=1)
+    elif escolha == '3': df_prazos['NomeRegiao'] = df_prazos.apply(lambda row: f"Região {row['Nome da Região'].upper()} {nome_transportadora}", axis=1)
     
     wb_modelo = load_workbook(file_modelo)
     ws_regioes = wb_modelo['regioes']
