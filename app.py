@@ -13,6 +13,100 @@ import io
 # =============================================================================
 st.set_page_config(page_title="Ferramentas Logísticas", page_icon="📦", layout="wide")
 
+# =============================================================================
+# INJEÇÃO CSS - LIQUID GLASSMORPHISM (ESTILO iOS)
+# =============================================================================
+st.markdown("""
+<style>
+/* 1. Fundo principal com gradiente animado (necessário para ver o desfoque) */
+.stApp {
+    background: linear-gradient(-45deg, #1e1e2f, #2a2a40, #1f3b4d, #252538);
+    background-size: 400% 400%;
+    animation: gradient 15s ease infinite;
+}
+
+@keyframes gradient {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* 2. Barra Lateral (Sidebar) com efeito de vidro */
+[data-testid="stSidebar"] {
+    background: rgba(255, 255, 255, 0.05) !important;
+    backdrop-filter: blur(15px) !important;
+    -webkit-backdrop-filter: blur(15px) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 3. Estilização das Abas (Tabs) */
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 15px;
+    padding: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    gap: 8px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background: transparent;
+    border-radius: 10px;
+    color: #e0e0e0 !important;
+    border: none !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background: rgba(255, 255, 255, 0.2) !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    font-weight: bold;
+}
+
+/* 4. Botões Translúcidos e Arredondados */
+.stButton > button {
+    background: rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 20px !important;
+    color: white !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+}
+
+.stButton > button:hover {
+    background: rgba(255, 255, 255, 0.25) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* 5. Área de Upload de Arquivos */
+[data-testid="stFileUploadDropzone"] {
+    background: rgba(255, 255, 255, 0.05) !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    border: 1px dashed rgba(255, 255, 255, 0.3) !important;
+    border-radius: 20px !important;
+}
+
+/* 6. Inputs de Texto e Caixas de Seleção */
+.stTextInput > div > div > input, .stSelectbox > div > div > div {
+    background: rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 12px !important;
+    color: white !important;
+}
+
+/* Remove a cor sólida de fundo de blocos internos para manter o vidro visível */
+[data-testid="stVerticalBlock"] > div {
+    background-color: transparent !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 CAMINHO_CACHE_IBGE = 'municipios_ibge_cache.json'
 ARQUIVO_MODELO_REGIAO = 'Modelo Região.xlsx'
 ARQUIVO_MODELO_ROTA = 'Modelo Rota.xlsx'
