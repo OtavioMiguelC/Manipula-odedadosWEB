@@ -9,102 +9,118 @@ import json
 import io
 
 # =============================================================================
-# CONFIGURAÇÕES GERAIS E CONSTANTES
+# CONFIGURAÇÕES GERAIS E INJEÇÃO DE ESTILO (NOVO)
 # =============================================================================
 st.set_page_config(page_title="Ferramentas Logísticas", page_icon="📦", layout="wide")
 
-# =============================================================================
-# INJEÇÃO CSS - LIQUID GLASSMORPHISM (ESTILO iOS)
-# =============================================================================
-st.markdown("""
+# Bloco de CSS Customizado para o efeito Liquid Glassmorphism
+liquid_glass_css = """
 <style>
-/* 1. Fundo principal com gradiente animado (necessário para ver o desfoque) */
-.stApp {
-    background: linear-gradient(-45deg, #1e1e2f, #2a2a40, #1f3b4d, #252538);
-    background-size: 400% 400%;
-    animation: gradient 15s ease infinite;
-}
+    /* 1. FUNDO LÍQUIDO DINÂMICO */
+    /* Cria um fundo com gradiente animado sutil */
+    .stApp {
+        background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+        background-size: 400% 400%;
+        animation: gradient 15s ease infinite;
+        font-family: 'Inter', sans-serif; /* Fonte moderna */
+    }
 
-@keyframes gradient {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-}
+    @keyframes gradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
 
-/* 2. Barra Lateral (Sidebar) com efeito de vidro */
-[data-testid="stSidebar"] {
-    background: rgba(255, 255, 255, 0.05) !important;
-    backdrop-filter: blur(15px) !important;
-    -webkit-backdrop-filter: blur(15px) !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
-}
+    /* 2. PAINÉIS DE VIDRO (BARRA LATERAL E CONTEÚDO PRINCIPAL) */
+    /* Remove os fundos sólidos padrão e aplica vidro frosted */
+    [data-testid="stSidebar"], .main .block-container {
+        background: rgba(255, 255, 255, 0.05) !important;
+        backdrop-filter: blur(15px) !important; /* O desfoque é a chave */
+        -webkit-backdrop-filter: blur(15px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        margin: 10px;
+        padding: 2rem !important;
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+    }
+    
+    [data-testid="stSidebar"] {
+        margin-right: 0;
+        border-radius: 20px 0 0 20px;
+    }
 
-/* 3. Estilização das Abas (Tabs) */
-.stTabs [data-baseweb="tab-list"] {
-    background: rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-radius: 15px;
-    padding: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    gap: 8px;
-}
+    /* Ajuste de Margens do Conteúdo Principal */
+    .main .block-container {
+        max-width: 95% !important;
+    }
 
-.stTabs [data-baseweb="tab"] {
-    background: transparent;
-    border-radius: 10px;
-    color: #e0e0e0 !important;
-    border: none !important;
-}
+    /* 3. ESTILO DE WIDGETS COMO VIDRO */
+    /* Inputs de texto, selectboxes e file uploaders */
+    .stTextInput>div>div>input, .stSelectbox>div>div>div, [data-testid="stFileUploadDropzone"] {
+        background: rgba(255, 255, 255, 0.08) !important;
+        backdrop-filter: blur(10px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        border-radius: 12px !important;
+        color: white !important;
+    }
+    
+    [data-testid="stFileUploadDropzone"] p {
+        color: rgba(255, 255, 255, 0.7) !important;
+    }
 
-.stTabs [aria-selected="true"] {
-    background: rgba(255, 255, 255, 0.2) !important;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-    font-weight: bold;
-}
+    /* 4. BOTÕES E TABS MODERNOS */
+    /* Botões Padrão */
+    .stButton>button, .stDownloadButton>button {
+        background: rgba(255, 255, 255, 0.1) !important;
+        backdrop-filter: blur(5px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 20px !important;
+        color: white !important;
+        font-weight: 600 !important;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
 
-/* 4. Botões Translúcidos e Arredondados */
-.stButton > button {
-    background: rgba(255, 255, 255, 0.1) !important;
-    backdrop-filter: blur(10px) !important;
-    -webkit-backdrop-filter: blur(10px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
-    border-radius: 20px !important;
-    color: white !important;
-    transition: all 0.3s ease !important;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
-}
+    .stButton>button:hover, .stDownloadButton>button:hover {
+        background: rgba(255, 255, 255, 0.2) !important;
+        transform: translateY(-2px);
+    }
 
-.stButton > button:hover {
-    background: rgba(255, 255, 255, 0.25) !important;
-    transform: translateY(-2px);
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2) !important;
-}
+    /* Abas (Tabs) */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 5px;
+        border-radius: 15px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
 
-/* 5. Área de Upload de Arquivos */
-[data-testid="stFileUploadDropzone"] {
-    background: rgba(255, 255, 255, 0.05) !important;
-    backdrop-filter: blur(10px) !important;
-    -webkit-backdrop-filter: blur(10px) !important;
-    border: 1px dashed rgba(255, 255, 255, 0.3) !important;
-    border-radius: 20px !important;
-}
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        border-radius: 10px;
+        color: rgba(255, 255, 255, 0.7) !important;
+    }
 
-/* 6. Inputs de Texto e Caixas de Seleção */
-.stTextInput > div > div > input, .stSelectbox > div > div > div {
-    background: rgba(255, 255, 255, 0.1) !important;
-    backdrop-filter: blur(10px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 12px !important;
-    color: white !important;
-}
-
-/* Remove a cor sólida de fundo de blocos internos para manter o vidro visível */
-[data-testid="stVerticalBlock"] > div {
-    background-color: transparent !important;
-}
+    .stTabs [aria-selected="true"] {
+        background: rgba(255, 255, 255, 0.15) !important;
+        color: white !important;
+        font-weight: bold;
+    }
+    
+    /* 5. TEXTOS E TÍTULOS */
+    h1, h2, h3 {
+        color: white !important;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    .stMarkdown p {
+        color: rgba(255, 255, 255, 0.9) !important;
+    }
 </style>
-""", unsafe_allow_html=True)
+"""
+# Injeção do CSS na página
+st.markdown(liquid_glass_css, unsafe_allow_html=True)
 
 
 CAMINHO_CACHE_IBGE = 'municipios_ibge_cache.json'
@@ -118,7 +134,7 @@ COL_PRAZO = 'Prazo'
 COL_IBGE = 'Codigo IBGE'
 
 # =============================================================================
-# FUNÇÕES DE APOIO E GERAÇÃO DE MODELO
+# FUNÇÕES DE APOIO E GERAÇÃO DE MODELO (SEU CÓDIGO ORIGINAL CONTINUA)
 # =============================================================================
 def normalizar(texto):
     if pd.isna(texto): return ""
@@ -134,6 +150,7 @@ def normalizar(texto):
 
 def API_Atualizar_Cache_IBGE():
     try:
+        # Nota: Desativar verificação SSL (verify=False) não é recomendado em produção.
         r = requests.get("https://servicodados.ibge.gov.br/api/v1/localidades/municipios", timeout=30, verify=False)
         municipios_api = r.json()
 
@@ -176,7 +193,7 @@ def gerar_modelo_base_vazio():
     return output
 
 # =============================================================================
-# LÓGICA DE NEGÓCIO
+# LÓGICA DE NEGÓCIO (SEU CÓDIGO ORIGINAL CONTINUA)
 # =============================================================================
 
 def processar_ibge(file):
@@ -430,9 +447,10 @@ def converter_freq_txt(file):
     return output
 
 # =============================================================================
-# INTERFACE DO STREAMLIT
+# INTERFACE DO STREAMLIT (SEU CÓDIGO ORIGINAL CONTINUA)
 # =============================================================================
 
+# st.title já está definido no início do arquivo
 st.title("📦 Ferramentas Gerais - Logística")
 
 with st.sidebar:
