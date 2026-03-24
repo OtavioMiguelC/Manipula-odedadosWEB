@@ -615,26 +615,30 @@ with tab6:
 # --- ABA 7: Cadastro TDE ---
 with tab7:
     st.markdown("### 👥 Cadastro TDE (Pessoas)")
-    st.write("Geração de arquivos em lote separados por valor e limitados por quantidade de linhas.")
+    st.write("Geração de arquivos em lote usando o modelo padrão do repositório.")
 
-    col1, col2 = st.columns([2, 1])
+    # Define o nome do arquivo exatamente como ele está salvo na sua pasta do Git
+    ARQUIVO_MODELO_TDE = "Modelo TDE.xlsx"
 
-    with col1:
-        file_template_tde = st.file_uploader("📂 Selecionar Modelo de TDE", type=["xlsx"], key="tde_template")
-    with col2:
-        limite_linhas_tde = st.number_input("Linhas por arquivo:", min_value=1, value=500, step=10, key="tde_limite")
+    # Removemos o file_uploader e deixamos apenas o limite de linhas
+    limite_linhas_tde = st.number_input("Linhas por arquivo:", min_value=1, value=500, step=10, key="tde_limite")
 
     texto_tde = st.text_area("📋 COLE OS DADOS (CNPJ + TIPO + RAZÃO SOCIAL + VALOR):", height=200, key="tde_texto")
 
     if st.button("PROCESSAR ARQUIVOS TDE", use_container_width=True):
-        if not file_template_tde:
-            st.warning("⚠️ Selecione o modelo Excel primeiro.")
+        # Verifica se o arquivo realmente está na pasta do projeto
+        if not os.path.exists(ARQUIVO_MODELO_TDE):
+            st.error(f"⚠️ O arquivo '{ARQUIVO_MODELO_TDE}' não foi encontrado! Certifique-se de que ele está na mesma pasta do código no Git.")
         elif not texto_tde.strip():
             st.warning("⚠️ Cole os dados na caixa de texto para processar.")
         else:
             with st.spinner("Estruturando dados e gerando arquivos..."):
                 try:
-                    zip_output = gerar_tde_zip(texto_tde, file_template_tde, int(limite_linhas_tde))
+                    # Lê o arquivo local como Bytes (simulando o upload) para a função funcionar perfeitamente
+                    with open(ARQUIVO_MODELO_TDE, "rb") as f:
+                        template_bytes = io.BytesIO(f.read())
+                    
+                    zip_output = gerar_tde_zip(texto_tde, template_bytes, int(limite_linhas_tde))
                     st.session_state['zip_tde'] = zip_output
                     st.success("✅ Arquivos gerados com sucesso! Eles foram compactados para download.")
                 except Exception as e:
