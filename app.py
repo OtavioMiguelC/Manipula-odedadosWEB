@@ -397,7 +397,7 @@ def gerar_tde_zip(texto_input, template_bytes, limite_linhas):
                     ws.cell(row=row_idx, column=4).value = str(razao)
                     row_idx += 1
 
-                nome_arquivo = f"TDE_R$_{valor_limpo}_({inicio}_a_{fim}).xlsx"
+                nome_arquivo = f"TDE R$ {valor limpo} ({inicio} a {fim}).xlsx"
                 
                 # Salva o arquivo Excel gerado em um buffer de memória
                 excel_buffer = io.BytesIO()
