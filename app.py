@@ -263,7 +263,7 @@ def processar_regiao(cnpj, file_base, file_modelo):
     output.seek(0)
     return output
 
-def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc_adicional, ibge_origem, file_modelo_regioes, file_template_rota):
+def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc_adicional, tipo_origem, valor_origem, file_modelo_regioes, file_template_rota):
     # Lendo as regiões do arquivo gerado anteriormente
     wb_modelo_regioes = load_workbook(file_modelo_regioes)
     ws_regioes = wb_modelo_regioes['regioes']
@@ -294,7 +294,13 @@ def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc
         ws_rotas.cell(row=next_row, column=1).value = f"{cnpj_transportadora} - {nome_transportadora}"
         desc = f"{desc_adicional} x {regiao_destino}" if desc_adicional else regiao_destino
         ws_rotas.cell(row=next_row, column=2).value = desc
-        ws_rotas.cell(row=next_row, column=3).value = ibge_origem
+        
+        # Lógica de preenchimento condicional da Origem
+        if tipo_origem == "Cidade (IBGE)":
+            ws_rotas.cell(row=next_row, column=3).value = valor_origem  # Coluna C (IBGE)
+        else:
+            ws_rotas.cell(row=next_row, column=5).value = valor_origem  # Coluna E (Região)
+            
         ws_rotas.cell(row=next_row, column=8).value = regiao_destino
         ws_rotas.cell(row=next_row, column=10).value = "VERDADEIRO"
         ws_rotas.cell(row=next_row, column=11).value = "VERDADEIRO"
@@ -454,17 +460,32 @@ with tab4:
     cnpj_rota = col2.text_input("CNPJ Transportadora (se difere do padrão)", value=cnpj_global)
     nome_transp_rota = col1.text_input("Nome Transportadora", value=nome_global) # Puxa do lateral por padrão
     desc_rota = col2.text_input("Desc. Adicional (Opcional)")
-    ibge_orig = st.text_input("IBGE Origem")
+    
+    st.markdown("#### Dados de Origem")
+    col3, col4 = st.columns(2)
+    tipo_origem = col3.radio("Definir origem por:", ["Cidade (IBGE)", "Região"])
+    
+    label_origem = "Código IBGE Origem" if tipo_origem == "Cidade (IBGE)" else "Nome da Região de Origem"
+    valor_origem = col4.text_input(label_origem)
     
     if file_modelo_regioes and st.button("Gerar Rotas"):
-        if not cnpj_rota or not ibge_orig:
-            st.warning("⚠️ CNPJ e IBGE Origem são obrigatórios.")
+        if not cnpj_rota or not valor_origem:
+            st.warning("⚠️ CNPJ e Origem são obrigatórios.")
         elif not os.path.exists(ARQUIVO_MODELO_ROTA):
             st.error(f"⚠️ O arquivo original '{ARQUIVO_MODELO_ROTA}' não foi encontrado na pasta do projeto!")
         else:
             with st.spinner(f"Gerando rotas baseadas no banco ({ARQUIVO_MODELO_ROTA})..."):
                 try:
-                    out_bytes = processar_rotas(tipo_rota.split(":")[0], cnpj_rota, nome_transp_rota.upper(), desc_rota.upper(), ibge_orig, file_modelo_regioes, ARQUIVO_MODELO_ROTA)
+                    out_bytes = processar_rotas(
+                        tipo_rota.split(":")[0], 
+                        cnpj_rota, 
+                        nome_transp_rota.upper(), 
+                        desc_rota.upper(), 
+                        tipo_origem, 
+                        valor_origem, 
+                        file_modelo_regioes, 
+                        ARQUIVO_MODELO_ROTA
+                    )
                     st.session_state['out_rotas'] = out_bytes
                     
                     # Salva o nome sugerido para o arquivo da Rota
