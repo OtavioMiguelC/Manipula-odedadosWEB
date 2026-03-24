@@ -7,6 +7,9 @@ from difflib import SequenceMatcher
 import os
 import json
 import io
+import zipfile
+import math
+import re
 
 # =============================================================================
 # CONFIGURAÇÕES GERAIS E CONSTANTES
@@ -341,6 +344,74 @@ def converter_freq_txt(file):
     output.seek(0)
     return output
 
+def gerar_tde_zip(texto_input, template_bytes, limite_linhas):
+    """
+    Processa o texto colado, divide os dados por valor e por limite de linhas,
+    preenche o modelo Excel e retorna um arquivo ZIP em memória contendo todos os arquivos.
+    """
+    linhas = [l for l in texto_input.split('\n') if l.strip()]
+    grupos_por_valor = {}
+
+    # 1. Agrupamento dos dados
+    for l in linhas:
+        partes = l.replace('\t', ' ').strip().split()
+        if len(partes) >= 3:
+            cnpj_raw = partes[0].strip().replace('.', '').replace('/', '').replace('-', '')
+            tipo = partes[1].strip().upper() 
+            valor_original = partes[-1].strip().replace("R$", "").replace(",", ".")
+            razao = " ".join(partes[2:-1]).upper()
+
+            if valor_original not in grupos_por_valor:
+                grupos_por_valor[valor_original] = []
+            grupos_por_valor[valor_original].append((cnpj_raw, tipo, razao))
+
+    # Cria o arquivo ZIP em memória
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+        
+        # 2. Geração dos arquivos baseados no template
+        for valor, dados_lista in grupos_por_valor.items():
+            valor_limpo = str(valor).split('.')[0]
+            # Remove caracteres inválidos para nomes de arquivos
+            valor_limpo = re.sub(r'[\\/*?:"<>|]', '_', valor_limpo)          
+            
+            total_registros = len(dados_lista)
+            num_arquivos = math.ceil(total_registros / limite_linhas)
+            
+            for i in range(num_arquivos):
+                inicio = i * limite_linhas
+                fim = min((i + 1) * limite_linhas, total_registros)
+                lote = dados_lista[inicio:fim]
+                
+                # Reseta o ponteiro do template para carregar um modelo limpo a cada loop
+                template_bytes.seek(0)
+                wb = load_workbook(template_bytes)
+                ws = wb["Pessoa"] if "Pessoa" in wb.sheetnames else wb.active
+
+                # Os dados DEVEM começar na linha 5 para manter validações e estilo do template
+                row_idx = 5
+                
+                for cnpj, tipo, razao in lote:
+                    ws.cell(row=row_idx, column=1).value = str(cnpj)
+                    ws.cell(row=row_idx, column=2).value = str(tipo)
+                    ws.cell(row=row_idx, column=4).value = str(razao)
+                    row_idx += 1
+
+                nome_arquivo = f"TDE_R$_{valor_limpo}_({inicio}_a_{fim}).xlsx"
+                
+                # Salva o arquivo Excel gerado em um buffer de memória
+                excel_buffer = io.BytesIO()
+                wb.save(excel_buffer)
+                excel_buffer.seek(0)
+
+                # Escreve o arquivo Excel dentro do ZIP
+                zip_file.writestr(nome_arquivo, excel_buffer.read())
+
+    # Retorna o ZIP pronto para download
+    zip_buffer.seek(0)
+    return zip_buffer
+
+
 # =============================================================================
 # INTERFACE DO STREAMLIT
 # =============================================================================
@@ -367,13 +438,14 @@ with st.sidebar:
             API_Atualizar_Cache_IBGE()
             st.success("Cache atualizado!")
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🌍 Preencher IBGE", 
     "⏱️ Prazos/Freq", 
     "🗺️ Criar Região", 
     "📍 Gerar Rotas", 
     "🔄 Conv. S/N", 
-    "📅 Conv. STQQS"
+    "📅 Conv. STQQS",
+    "👥 Cadastro TDE"
 ])
 
 # --- ABA 1: IBGE ---
@@ -539,3 +611,40 @@ with tab6:
                 
     if 'out_stqqs' in st.session_state:
         st.download_button("📥 Baixar Arquivo STQQS", data=st.session_state['out_stqqs'], file_name="Frequencias_Texto_Convertidas.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# --- ABA 7: Cadastro TDE ---
+with tab7:
+    st.markdown("### 👥 Cadastro TDE (Pessoas)")
+    st.write("Geração de arquivos em lote separados por valor e limitados por quantidade de linhas.")
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        file_template_tde = st.file_uploader("📂 Selecionar Modelo de TDE", type=["xlsx"], key="tde_template")
+    with col2:
+        limite_linhas_tde = st.number_input("Linhas por arquivo:", min_value=1, value=500, step=10, key="tde_limite")
+
+    texto_tde = st.text_area("📋 COLE OS DADOS (CNPJ + TIPO + RAZÃO SOCIAL + VALOR):", height=200, key="tde_texto")
+
+    if st.button("PROCESSAR ARQUIVOS TDE", use_container_width=True):
+        if not file_template_tde:
+            st.warning("⚠️ Selecione o modelo Excel primeiro.")
+        elif not texto_tde.strip():
+            st.warning("⚠️ Cole os dados na caixa de texto para processar.")
+        else:
+            with st.spinner("Estruturando dados e gerando arquivos..."):
+                try:
+                    zip_output = gerar_tde_zip(texto_tde, file_template_tde, int(limite_linhas_tde))
+                    st.session_state['zip_tde'] = zip_output
+                    st.success("✅ Arquivos gerados com sucesso! Eles foram compactados para download.")
+                except Exception as e:
+                    st.error(f"Erro ao processar: {e}")
+
+    if 'zip_tde' in st.session_state:
+        st.download_button(
+            label="📥 BAIXAR TODOS OS ARQUIVOS (ZIP)",
+            data=st.session_state['zip_tde'],
+            file_name="Arquivos_Gerados_TDE.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
