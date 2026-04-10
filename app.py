@@ -150,7 +150,7 @@ def processar_ibge(file):
     return output, count_exato, count_aprox, nao_encontrados
 
 def processar_prazos(file_destino, file_base):
-    df_base = pd.read_excel(file_base, sheet_name="Base", dtype=str)
+    df_base = pd.read_excel(file_base, sheet_name="Base", dtype=str).fillna("")
     df_base.columns = [str(col).strip().upper() for col in df_base.columns]
     
     nome_coluna_texto_freq = None
