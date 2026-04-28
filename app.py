@@ -76,7 +76,7 @@ def gerar_modelo_base_vazio():
     return output
 
 # =============================================================================
-# LÓGICA DE NEGÓCIO - PROCESSAMENTO (MANTIDAS AS ANTERIORES)
+# LÓGICA DE NEGÓCIO
 # =============================================================================
 
 def processar_ibge(file):
@@ -216,24 +216,39 @@ def processar_regiao(cnpj, file_base, file_modelo):
     output.seek(0)
     return output
 
-def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc_adicional, tipo_origem, valor_origem, file_modelo_regioes, file_template_rota):
+def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, tipo_origem, valor_origem, file_modelo_regioes, file_template_rota):
     wb_modelo_regioes = load_workbook(file_modelo_regioes)
     ws_regioes = wb_modelo_regioes['regioes']
+    
+    # Extrai as regiões ignorando células vazias
     regioes_encontradas = [str(ws_regioes.cell(row=i, column=3).value) for i in range(5, ws_regioes.max_row + 1) if ws_regioes.cell(row=i, column=3).value]
-    if not regioes_encontradas: raise Exception("Nenhuma região encontrada.")
+    
+    if not regioes_encontradas: 
+        raise Exception("Nenhuma região encontrada no modelo de regiões.")
+        
     wb_rotas = load_workbook(file_template_rota)
     ws_rotas = wb_rotas["Rotas"] if "Rotas" in wb_rotas.sheetnames else wb_rotas.active
+    
     next_row = 6
-    while ws_rotas.cell(row=next_row, column=1).value is not None: next_row += 1
+    while ws_rotas.cell(row=next_row, column=1).value is not None: 
+        next_row += 1
+        
     for regiao_destino in regioes_encontradas:
         ws_rotas.cell(row=next_row, column=1).value = f"{cnpj_transportadora} - {nome_transportadora}"
-        ws_rotas.cell(row=next_row, column=2).value = f"{desc_adicional} x {regiao_destino}" if desc_adicional else regiao_destino
-        if tipo_origem == "Cidade (IBGE)": ws_rotas.cell(row=next_row, column=3).value = valor_origem
-        else: ws_rotas.cell(row=next_row, column=5).value = valor_origem
+        
+        # Coloca apenas o nome da região na descrição da rota
+        ws_rotas.cell(row=next_row, column=2).value = regiao_destino 
+        
+        if tipo_origem == "Cidade (IBGE)": 
+            ws_rotas.cell(row=next_row, column=3).value = valor_origem
+        else: 
+            ws_rotas.cell(row=next_row, column=5).value = valor_origem
+            
         ws_rotas.cell(row=next_row, column=8).value = regiao_destino
         ws_rotas.cell(row=next_row, column=10).value = "VERDADEIRO"
         ws_rotas.cell(row=next_row, column=11).value = "VERDADEIRO"
         next_row += 1
+        
     output = io.BytesIO()
     wb_rotas.save(output)
     output.seek(0)
@@ -259,26 +274,15 @@ def converter_freq_txt(file):
         row[5].value = False
     output = io.BytesIO(); wb.save(output); output.seek(0); return output
 
-# =============================================================================
-# LÓGICA DE NEGÓCIO: RESTRIÇÕES POR PESSOAS (NOVA)
-# =============================================================================
-
 def gerar_restricoes_zip(texto_input, template_bytes, limite_linhas, categoria, tipo_f_j, usar_valor):
-    """
-    Processa os dados para a tela 'Restrições Por Pessoas'.
-    O texto colado deve ser: CNPJ + RAZAO + VALOR (opcional)
-    """
     linhas = [l for l in texto_input.split('\n') if l.strip()]
     grupos_por_valor = {}
 
     for l in linhas:
-        # Substitui tabulação por espaço e divide
         partes = l.replace('\t', ' ').strip().split()
-        if len(partes) < 2: continue # Precisa de pelo menos CNPJ e Razão
+        if len(partes) < 2: continue 
         
         cnpj_raw = partes[0].strip().replace('.', '').replace('/', '').replace('-', '')
-        
-        # Lógica para Valor opcional: tentamos ver se a última parte parece um número/moeda
         possivel_valor = partes[-1].replace("R$", "").replace(".", "").replace(",", ".")
         valor_final = "0"
         razao_partes = partes[1:]
@@ -288,10 +292,9 @@ def gerar_restricoes_zip(texto_input, template_bytes, limite_linhas, categoria, 
             valor_final = possivel_valor
             razao_partes = partes[1:-1]
         except:
-            valor_final = "0" # Valor não detectado, assume 0 ou ignora
+            valor_final = "0" 
 
         razao = " ".join(razao_partes).upper()
-        
         chave_grupo = valor_final if usar_valor else "GERAL"
 
         if chave_grupo not in grupos_por_valor:
@@ -316,11 +319,10 @@ def gerar_restricoes_zip(texto_input, template_bytes, limite_linhas, categoria, 
                 row_idx = 5
                 for cnpj, razao, v_lin in lote:
                     ws.cell(row=row_idx, column=1).value = str(cnpj)
-                    ws.cell(row=row_idx, column=2).value = str(tipo_f_j) # F ou J da flag
+                    ws.cell(row=row_idx, column=2).value = str(tipo_f_j) 
                     ws.cell(row=row_idx, column=4).value = str(razao)
                     row_idx += 1
 
-                # Montagem do Nome do Arquivo conforme Regras
                 prefixo = f"{categoria} " if categoria != "Outros" else ""
                 faixa_linhas = f"{inicio} a {fim} Linhas"
                 sufixo_valor = f" R${valor_chave}" if (usar_valor and valor_chave != "0") else ""
@@ -355,7 +357,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🌍 Preencher IBGE", "⏱️ Prazos/Freq", "🗺️ Criar Região", "📍 Gerar Rotas", "🔄 Conv. S/N", "📅 Conv. STQQS", "👥 Restrições Por Pessoas"
 ])
 
-# (As abas 1 a 6 permanecem com o código original para não perder funcionalidades)
+# --- ABA 1: IBGE ---
 with tab1:
     st.markdown("### Preencher Códigos IBGE")
     file_ibge = st.file_uploader("Planilha de Base", type=["xlsx"], key="ibge_file")
@@ -366,6 +368,7 @@ with tab1:
     if 'out_ibge' in st.session_state:
         st.download_button("📥 Baixar Arquivo IBGE", data=st.session_state['out_ibge'], file_name="Base_IBGE_Preenchida.xlsx")
 
+# --- ABA 2: Prazos e Frequência ---
 with tab2:
     st.markdown("### Preencher Prazos e Frequência")
     c1, c2 = st.columns(2); f_dest = c1.file_uploader("Planilha DESTINO", type=["xlsx"]); f_base = c2.file_uploader("BASE", type=["xlsx"])
@@ -375,9 +378,10 @@ with tab2:
     if 'out_prazos' in st.session_state:
         st.download_button("📥 Baixar Destino", data=st.session_state['out_prazos'], file_name="Destino_Prazos.xlsx")
 
+# --- ABA 3: Criar Regiões ---
 with tab3:
     st.markdown("### Criar Regiões")
-    f_reg = st.file_uploader("Base de Prazos", type=["xlsx"])
+    f_reg = st.file_uploader("Base de Prazos", type=["xlsx"], key="reg_up")
     if f_reg and st.button("Criar Regiões"):
         if not cnpj_global: st.warning("Preencha o CNPJ lateral")
         else:
@@ -387,36 +391,80 @@ with tab3:
     if 'out_regiao' in st.session_state:
         st.download_button("📥 Baixar Regiões", data=st.session_state['out_regiao'], file_name=f"Regioes_{nome_global}.xlsx")
 
+# --- ABA 4: Gerar Rotas ---
 with tab4:
     st.markdown("### Gerar Rotas")
-    f_mod_reg = st.file_uploader("Modelo de Região preenchido", type=["xlsx"])
-    c1, c2 = st.columns(2)
-    t_orig = c1.radio("Origem por:", ["Cidade (IBGE)", "Região"])
-    v_orig = c2.text_input("Valor da Origem (IBGE ou Nome)")
-    if f_mod_reg and st.button("Gerar Rotas"):
-        out = processar_rotas("1", cnpj_global, nome_global, "", t_orig, v_orig, f_mod_reg, ARQUIVO_MODELO_ROTA)
-        st.session_state['out_rotas'] = out; st.success("✅ Rotas geradas!")
+    
+    file_modelo_regioes = st.file_uploader("1. Modelo de Região (Já preenchido no passo anterior)", type=["xlsx"], key="rota_mod_reg")
+    
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    tipo_rota = col1.selectbox("Dados da Rota", ["1: ROTA - PRAZO", "2: (TRANS) (ORIGEM)"])
+    cnpj_rota = col2.text_input("CNPJ Transportadora (se difere do padrão)", value=cnpj_global)
+    nome_transp_rota = col1.text_input("Nome Transportadora", value=nome_global) 
+    
+    st.markdown("#### Dados de Origem")
+    col3, col4 = st.columns(2)
+    tipo_origem = col3.radio("Definir origem por:", ["Cidade (IBGE)", "Região"])
+    
+    label_origem = "Código IBGE Origem" if tipo_origem == "Cidade (IBGE)" else "Nome da Região de Origem"
+    valor_origem = col4.text_input(label_origem)
+    
+    if file_modelo_regioes and st.button("Gerar Rotas"):
+        if not cnpj_rota or not valor_origem:
+            st.warning("⚠️ CNPJ e Origem são obrigatórios.")
+        elif not os.path.exists(ARQUIVO_MODELO_ROTA):
+            st.error(f"⚠️ O arquivo original '{ARQUIVO_MODELO_ROTA}' não foi encontrado na pasta do projeto!")
+        else:
+            with st.spinner(f"Gerando rotas baseadas no banco ({ARQUIVO_MODELO_ROTA})..."):
+                try:
+                    out_bytes = processar_rotas(
+                        tipo_rota.split(":")[0], 
+                        cnpj_rota, 
+                        nome_transp_rota.upper(), 
+                        tipo_origem, 
+                        valor_origem, 
+                        file_modelo_regioes, 
+                        ARQUIVO_MODELO_ROTA
+                    )
+                    st.session_state['out_rotas'] = out_bytes
+                    
+                    nome_sugerido_rota = f"Rotas_{nome_transp_rota.strip()}.xlsx" if nome_transp_rota.strip() else "Rotas_Preenchidas.xlsx"
+                    st.session_state['nome_arq_rota'] = nome_sugerido_rota
+                    
+                    st.success("✅ Rotas estruturadas com sucesso dentro do modelo original!")
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+                    
     if 'out_rotas' in st.session_state:
-        st.download_button("📥 Baixar Rotas", data=st.session_state['out_rotas'], file_name=f"Rotas_{nome_global}.xlsx")
+        st.download_button(
+            label="📥 Baixar Planilha de Rotas Preenchida", 
+            data=st.session_state['out_rotas'], 
+            file_name=st.session_state.get('nome_arq_rota', 'Rotas_Preenchidas.xlsx'), 
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
+# --- ABA 5: Converter S/N ---
 with tab5:
     f_sn = st.file_uploader("Planilha S/N", type=["xlsx"])
     if f_sn and st.button("Converter S/N"):
         st.session_state['out_sn'] = converter_freq(f_sn); st.success("Convertido!")
     if 'out_sn' in st.session_state:
-        st.download_button("📥 Baixar", data=st.session_state['out_sn'], file_name="S_N_Convertido.xlsx")
+        st.download_button("📥 Baixar S/N", data=st.session_state['out_sn'], file_name="S_N_Convertido.xlsx")
 
+# --- ABA 6: Converter STQQS ---
 with tab6:
     f_st = st.file_uploader("Planilha STQQS", type=["xlsx"])
     if f_st and st.button("Converter STQQS"):
         st.session_state['out_stqqs'] = converter_freq_txt(f_st); st.success("Convertido!")
     if 'out_stqqs' in st.session_state:
-        st.download_button("📥 Baixar", data=st.session_state['out_stqqs'], file_name="STQQS_Convertido.xlsx")
+        st.download_button("📥 Baixar STQQS", data=st.session_state['out_stqqs'], file_name="STQQS_Convertido.xlsx")
 
-# --- ABA 7: NOVA LÓGICA ---
+# --- ABA 7: RESTRIÇÕES POR PESSOAS ---
 with tab7:
     st.markdown("### 👥 Restrições Por Pessoas")
-    st.info("Esta ferramenta gera arquivos de cadastro de pessoas (TDE/TAE/Outros) separando por valor e limite de linhas.")
+    st.info("Gera arquivos de cadastro de pessoas separando por valor e limite de linhas.")
 
     col_btn1, col_btn2, col_btn3 = st.columns(3)
     categoria_fleg = col_btn1.radio("Selecione a Categoria:", ["TDE", "TAE", "Outros"], horizontal=True)
@@ -425,16 +473,16 @@ with tab7:
 
     limite_linhas_rest = st.number_input("Linhas por arquivo:", min_value=1, value=500, step=100)
     
-    st.markdown("**📋 Cole abaixo os dados (Formato esperado: CNPJ | Razão Social | Valor):**")
+    st.markdown("**📋 Cole abaixo os dados (Formato: CNPJ | Razão Social | Valor Opcional):**")
     texto_rest = st.text_area("Dados:", height=250, placeholder="Ex: 12345678000100 EMPRESA LTDA 250,00", key="txt_rest")
 
     if st.button("🚀 PROCESSAR RESTRIÇÕES POR PESSOAS", use_container_width=True):
         if not os.path.exists(ARQUIVO_MODELO_TDE):
-            st.error(f"Arquivo '{ARQUIVO_MODELO_TDE}' não encontrado!")
+            st.error(f"Arquivo '{ARQUIVO_MODELO_TDE}' não encontrado na pasta do projeto!")
         elif not texto_rest.strip():
             st.warning("Cole os dados para processar.")
         else:
-            with st.spinner("Gerando arquivos..."):
+            with st.spinner("Estruturando dados e gerando arquivos..."):
                 try:
                     with open(ARQUIVO_MODELO_TDE, "rb") as f:
                         template_bytes = io.BytesIO(f.read())
@@ -448,7 +496,7 @@ with tab7:
                         usar_valor_fleg
                     )
                     st.session_state['zip_rest'] = zip_out
-                    st.success("✅ Processamento concluído!")
+                    st.success("✅ Arquivos gerados e compactados com sucesso!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
 
