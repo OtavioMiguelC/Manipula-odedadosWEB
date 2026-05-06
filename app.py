@@ -75,6 +75,19 @@ def gerar_modelo_base_vazio():
     output.seek(0)
     return output
 
+def carregar_lista_cidades_ibge():
+    """Lê o cache do IBGE e retorna uma lista formatada para o selectbox."""
+    if not os.path.exists(CAMINHO_CACHE_IBGE):
+        API_Atualizar_Cache_IBGE()
+    try:
+        with open(CAMINHO_CACHE_IBGE, 'r', encoding='utf-8') as f:
+            dados = json.load(f)
+        # Formata como: NOME - UF (CODIGO_IBGE)
+        lista = [f"{m['nome']} - {m['uf']} ({m['id']})" for m in dados]
+        return sorted(lista)
+    except Exception:
+        return []
+
 # =============================================================================
 # LÓGICA DE NEGÓCIO
 # =============================================================================
@@ -234,7 +247,6 @@ def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc
     for regiao_destino in regioes_encontradas:
         ws_rotas.cell(row=next_row, column=1).value = f"{cnpj_transportadora} - {nome_transportadora}"
         
-        # LÓGICA CORRIGIDA: Usa a descrição adicional com o 'x' caso ela tenha sido preenchida
         desc = f"{desc_adicional} x {regiao_destino}" if desc_adicional else regiao_destino
         ws_rotas.cell(row=next_row, column=2).value = desc
         
@@ -403,15 +415,24 @@ with tab4:
     cnpj_rota = col2.text_input("CNPJ Transportadora (se difere do padrão)", value=cnpj_global)
     nome_transp_rota = col1.text_input("Nome Transportadora", value=nome_global) 
     
-    # LÓGICA CORRIGIDA: Campo retornado para a interface
     desc_rota = col2.text_input("Desc. Adicional (Opcional)")
     
     st.markdown("#### Dados de Origem")
     col3, col4 = st.columns(2)
     tipo_origem = col3.radio("Definir origem por:", ["Cidade (IBGE)", "Região"])
     
-    label_origem = "Código IBGE Origem" if tipo_origem == "Cidade (IBGE)" else "Nome da Região de Origem"
-    valor_origem = col4.text_input(label_origem)
+    if tipo_origem == "Cidade (IBGE)":
+        # CHAMA A NOVA FUNÇÃO E MONTA O SELECTBOX
+        lista_cidades = carregar_lista_cidades_ibge()
+        cidade_selecionada = col4.selectbox("Selecione ou digite a Cidade de Origem", options=[""] + lista_cidades)
+        
+        # EXTRAI APENAS O CÓDIGO IBGE DO TEXTO SELECIONADO (ex: "BLUMENAU - SC (4202404)")
+        if cidade_selecionada:
+            valor_origem = cidade_selecionada.split("(")[-1].replace(")", "").strip()
+        else:
+            valor_origem = ""
+    else:
+        valor_origem = col4.text_input("Nome da Região de Origem")
     
     if file_modelo_regioes and st.button("Gerar Rotas"):
         if not cnpj_rota or not valor_origem:
@@ -421,7 +442,6 @@ with tab4:
         else:
             with st.spinner(f"Gerando rotas baseadas no banco ({ARQUIVO_MODELO_ROTA})..."):
                 try:
-                    # LÓGICA CORRIGIDA: Passando a variável desc_rota.upper() novamente
                     out_bytes = processar_rotas(
                         tipo_rota.split(":")[0], 
                         cnpj_rota, 
