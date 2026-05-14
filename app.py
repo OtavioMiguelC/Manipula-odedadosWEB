@@ -10,6 +10,7 @@ import io
 import zipfile
 import math
 import re
+import copy  # Adicionado para clonar a formatação das células
 
 # =============================================================================
 # CONFIGURAÇÕES GERAIS E CONSTANTES
@@ -87,6 +88,18 @@ def carregar_lista_cidades_ibge():
         return sorted(lista)
     except Exception:
         return []
+
+# Nova Função Auxiliar para Clonar Estilos do Excel
+def clonar_estilo(ws, linha_origem, linha_destino, max_col):
+    for col in range(1, max_col + 1):
+        celula_base = ws.cell(row=linha_origem, column=col)
+        celula_nova = ws.cell(row=linha_destino, column=col)
+        if celula_base.has_style:
+            celula_nova.font = copy.copy(celula_base.font)
+            celula_nova.border = copy.copy(celula_base.border)
+            celula_nova.fill = copy.copy(celula_base.fill)
+            celula_nova.number_format = celula_base.number_format
+            celula_nova.alignment = copy.copy(celula_base.alignment)
 
 # =============================================================================
 # LÓGICA DE NEGÓCIO
@@ -213,17 +226,36 @@ def processar_regiao(cnpj, file_base, file_modelo):
     df_prazos = pd.read_excel(file_base, sheet_name='Base')
     df_prazos['Nome da Região'] = df_prazos['Nome da Região'].astype(str).str.strip()
     df_prazos = df_prazos[df_prazos['Nome da Região'].notna() & (df_prazos['Nome da Região'].str.upper() != 'NAN') & (df_prazos['Nome da Região'] != '')]
+    
+    # OBS: Se o Lincros aceitar duplicadas, comente a linha abaixo com #
     df_prazos = df_prazos.drop_duplicates(subset=['Nome da Região', 'Codigo IBGE', 'Prazo'])
+    
     df_prazos['NomeRegiao'] = df_prazos['Nome da Região'].str.upper()
+    
     wb_modelo = load_workbook(file_modelo)
-    ws_regioes = wb_modelo['regioes']; ws_localizacoes = wb_modelo['localizacoes_atendidas']
+    ws_regioes = wb_modelo['regioes']
+    ws_localizacoes = wb_modelo['localizacoes_atendidas']
+    
+    # Limpa apenas valores antigos
     for ws in [ws_regioes, ws_localizacoes]:
         for row in ws.iter_rows(min_row=5, max_row=ws.max_row):
             for cell in row: cell.value = None
+
+    max_row_regioes = ws_regioes.max_row
     for i, nome_regiao in enumerate(df_prazos['NomeRegiao'].unique(), start=5):
-        ws_regioes[f'B{i}'] = cnpj; ws_regioes[f'C{i}'] = nome_regiao; ws_regioes[f'D{i}'] = "VERDADEIRO"
-    for i, row in enumerate(df_prazos.iterrows(), start=5):
-        ws_localizacoes[f'B{i}'] = row[1]['NomeRegiao']; ws_localizacoes[f'E{i}'] = row[1]['Codigo IBGE']
+        ws_regioes[f'B{i}'] = cnpj
+        ws_regioes[f'C{i}'] = nome_regiao
+        ws_regioes[f'D{i}'] = "VERDADEIRO"
+        if i > max_row_regioes:
+            clonar_estilo(ws_regioes, 5, i, 4)
+
+    max_row_locais = ws_localizacoes.max_row
+    for i, (_, row_data) in enumerate(df_prazos.iterrows(), start=5):
+        ws_localizacoes[f'B{i}'] = row_data['NomeRegiao']
+        ws_localizacoes[f'E{i}'] = row_data['Codigo IBGE']
+        if i > max_row_locais:
+            clonar_estilo(ws_localizacoes, 5, i, 5)
+
     output = io.BytesIO()
     wb_modelo.save(output)
     output.seek(0)
@@ -243,10 +275,11 @@ def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc
     next_row = 6
     while ws_rotas.cell(row=next_row, column=1).value is not None: 
         next_row += 1
-        
+    
+    max_row_template_rotas = ws_rotas.max_row
+
     for regiao_destino in regioes_encontradas:
         ws_rotas.cell(row=next_row, column=1).value = f"{cnpj_transportadora} - {nome_transportadora}"
-        
         desc = f"{desc_adicional} x {regiao_destino}" if desc_adicional else regiao_destino
         ws_rotas.cell(row=next_row, column=2).value = desc
         
@@ -258,6 +291,11 @@ def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc
         ws_rotas.cell(row=next_row, column=8).value = regiao_destino
         ws_rotas.cell(row=next_row, column=10).value = "VERDADEIRO"
         ws_rotas.cell(row=next_row, column=11).value = "VERDADEIRO"
+        
+        # Copia formatação para não dar erro no TMS
+        if next_row > max_row_template_rotas:
+            clonar_estilo(ws_rotas, 6, next_row, 12)
+            
         next_row += 1
         
     output = io.BytesIO()
@@ -398,7 +436,7 @@ with tab3:
         else:
             out = processar_regiao(cnpj_global, f_reg, ARQUIVO_MODELO_REGIAO)
             st.session_state['out_regiao'] = out
-            st.success("✅ Regiões criadas!")
+            st.success("✅ Regiões criadas com formatação idêntica!")
     if 'out_regiao' in st.session_state:
         st.download_button("📥 Baixar Regiões", data=st.session_state['out_regiao'], file_name=f"Regioes_{nome_global}.xlsx")
 
@@ -422,11 +460,9 @@ with tab4:
     tipo_origem = col3.radio("Definir origem por:", ["Cidade (IBGE)", "Região"])
     
     if tipo_origem == "Cidade (IBGE)":
-        # CHAMA A NOVA FUNÇÃO E MONTA O SELECTBOX
         lista_cidades = carregar_lista_cidades_ibge()
         cidade_selecionada = col4.selectbox("Selecione ou digite a Cidade de Origem", options=[""] + lista_cidades)
         
-        # EXTRAI APENAS O CÓDIGO IBGE DO TEXTO SELECIONADO (ex: "BLUMENAU - SC (4202404)")
         if cidade_selecionada:
             valor_origem = cidade_selecionada.split("(")[-1].replace(")", "").strip()
         else:
@@ -457,7 +493,7 @@ with tab4:
                     nome_sugerido_rota = f"Rotas_{nome_transp_rota.strip()}.xlsx" if nome_transp_rota.strip() else "Rotas_Preenchidas.xlsx"
                     st.session_state['nome_arq_rota'] = nome_sugerido_rota
                     
-                    st.success("✅ Rotas estruturadas com sucesso dentro do modelo original!")
+                    st.success("✅ Rotas estruturadas com sucesso dentro do modelo original (formatação copiada)!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
                     
