@@ -555,7 +555,7 @@ def gerar_tabela_prazo_lincros(df_base, cnpj="", nome_transp=""):
 # MÓDULO DE EXTRAÇÃO INTELIGENTE VIA GEMINI API
 # =============================================================================
 
-def extrair_dados_tabela_ia(arquivo_bytes, nome_arquivo, api_key=None):
+def extrair_dados_tabela_ia(arquivo_bytes, nome_arquivo, api_key=None, modelo_nome="gemini-2.5-flash"):
     """Utiliza a API do Gemini para ler o arquivo da transportadora (PDF, Excel, Imagem ou Texto)
     e extrair os dados estruturados de CNPJ, Praças, Preços, Taxas e Prazos."""
     secrets_key = st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets else None
@@ -647,16 +647,18 @@ Retorne APENAS o JSON puro, sem textos adicionais.
         contents = [f"Tabela da transportadora para extrair:\n\n{texto_tabela[:30000]}", prompt]
 
     try:
+        model_clean = modelo_nome.split(" ")[0].strip() if " " in modelo_nome else modelo_nome
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=model_clean,
             contents=contents,
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
         dados = json.loads(response.text)
         return dados
     except Exception as e:
-        st.error(f"Erro na chamada Gemini API: {e}. Alternando para extração heurística.")
+        st.error(f"Erro na chamada Gemini API ({modelo_nome}): {e}. Alternando para extração heurística.")
         return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
+
 
 def extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo):
     """Fallback heurístico para ler arquivos Excel/CSV caso a API key da IA não esteja configurada."""
@@ -807,7 +809,7 @@ with tab_ia:
         ]
     )
     
-    col_orig1, col_orig2 = st.columns(2)
+    col_orig1, col_orig2, col_mod = st.columns([1, 1, 1])
     tipo_orig_ia = col_orig1.selectbox("Origem Padrão das Rotas", ["Cidade (IBGE)", "Região"])
     if tipo_orig_ia == "Cidade (IBGE)":
         lista_cidades = carregar_lista_cidades_ibge()
@@ -816,10 +818,23 @@ with tab_ia:
     else:
         origem_val_ia = col_orig2.text_input("Nome da Região de Origem", value="SAO PAULO")
 
+    modelo_gemini_sel = col_mod.selectbox(
+        "🤖 Modelo Gemini AI",
+        options=[
+            "gemini-2.5-flash (⚡ Rápido e Eficiente)",
+            "gemini-2.5-pro (🧠 Mais Potente / Leitura Densa)",
+            "gemini-2.0-flash (🚀 Versão 2.0 Flash)",
+            "gemini-1.5-pro (🏢 Versão 1.5 Pro)"
+        ],
+        index=0,
+        help="Escolha gemini-2.5-pro se o documento for um PDF digitalizado ou imagem de alta complexidade."
+    )
+    modelo_id_limpo = modelo_gemini_sel.split(" ")[0].strip()
+
     if file_ia and st.button("🚀 PROCESSAR COM IA & GERAR ARQUIVOS", use_container_width=True):
-        with st.spinner("Extraindo dados com IA, cruzando IBGE e montando estrutura LINCROS..."):
+        with st.spinner(f"Extraindo dados com IA ({modelo_id_limpo}), cruzando IBGE e montando estrutura LINCROS..."):
             try:
-                dados_json = extrair_dados_tabela_ia(file_ia, file_ia.name, api_key=gemini_key_input)
+                dados_json = extrair_dados_tabela_ia(file_ia, file_ia.name, api_key=gemini_key_input, modelo_nome=modelo_id_limpo)
                 cnpj_final = cnpj_global or dados_json.get("cnpj", "")
                 nome_final = (nome_global or dados_json.get("nome_transportadora", "")).upper()
                 
