@@ -14,7 +14,7 @@ import re
 # =============================================================================
 # CONFIGURAÇÕES GERAIS E CONSTANTES
 # =============================================================================
-st.set_page_config(page_title="Ferramentas Logísticas", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ferramentas Logísticas - LINCROS AI", page_icon="📦", layout="wide")
 
 CAMINHO_CACHE_IBGE = 'municipios_ibge_cache.json'
 ARQUIVO_MODELO_REGIAO = 'Modelo Região.xlsx'
@@ -28,7 +28,7 @@ COL_PRAZO = 'Prazo'
 COL_IBGE = 'Codigo IBGE'
 
 # =============================================================================
-# FUNÇÕES DE APOIO
+# FUNÇÕES DE APOIO E CACHE
 # =============================================================================
 def normalizar(texto):
     if pd.isna(texto): return ""
@@ -82,17 +82,16 @@ def carregar_lista_cidades_ibge():
     try:
         with open(CAMINHO_CACHE_IBGE, 'r', encoding='utf-8') as f:
             dados = json.load(f)
-        # Formata como: NOME - UF (CODIGO_IBGE)
         lista = [f"{m['nome']} - {m['uf']} ({m['id']})" for m in dados]
         return sorted(lista)
     except Exception:
         return []
 
 # =============================================================================
-# LÓGICA DE NEGÓCIO
+# LÓGICA DE NEGÓCIO E PROCESSAMENTO
 # =============================================================================
 
-def processar_ibge(file):
+def processar_ibge(file_or_df):
     if not os.path.exists(CAMINHO_CACHE_IBGE):
         API_Atualizar_Cache_IBGE()
     with open(CAMINHO_CACHE_IBGE, 'r', encoding='utf-8') as f:
@@ -106,14 +105,20 @@ def processar_ibge(file):
         mapa_exato[(nome_norm, uf_norm)] = id_ibge
         if uf_norm not in db_ibge_por_uf: db_ibge_por_uf[uf_norm] = []
         db_ibge_por_uf[uf_norm].append({'nome_norm': nome_norm, 'id': id_ibge, 'nome_real': m['nome']})
-    df = pd.read_excel(file, sheet_name=NOME_ABA)
-    file.seek(0) 
+    
+    if isinstance(file_or_df, pd.DataFrame):
+        df = file_or_df.copy()
+        is_df = True
+    else:
+        df = pd.read_excel(file_or_df, sheet_name=NOME_ABA)
+        file_or_df.seek(0)
+        is_df = False
+
     if COL_IBGE not in df.columns: df[COL_IBGE] = ""
-    wb = load_workbook(file)
-    ws = wb[NOME_ABA]
-    col_ibge_num = df.columns.get_loc(COL_IBGE) + 1 
     count_exato, count_aprox = 0, 0
     nao_encontrados = []
+    
+    ibge_novos = []
     for index, row in df.iterrows():
         cidade_excel_raw = str(row[COL_CIDADE])
         uf_excel_raw = str(row[COL_UF])
@@ -136,9 +141,22 @@ def processar_ibge(file):
                     ibge_encontrado = melhor_candidato['id']
                     count_aprox += 1
         if ibge_encontrado:
-            ws.cell(row=index + 2, column=col_ibge_num).value = ibge_encontrado
+            ibge_novos.append(ibge_encontrado)
         else:
+            ibge_novos.append(row.get(COL_IBGE, ""))
             nao_encontrados.append(f"{cidade_excel_raw} - {uf_excel_raw}")
+
+    df[COL_IBGE] = ibge_novos
+
+    if is_df:
+        return df, count_exato, count_aprox, nao_encontrados
+
+    wb = load_workbook(file_or_df)
+    ws = wb[NOME_ABA]
+    col_ibge_num = df.columns.get_loc(COL_IBGE) + 1 
+    for index, val in enumerate(ibge_novos):
+        if val: ws.cell(row=index + 2, column=col_ibge_num).value = val
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -209,12 +227,14 @@ def processar_prazos(file_destino, file_base):
     output.seek(0)
     return output, cidades_atualizadas
 
-def processar_regiao(cnpj, file_base, file_modelo):
-    df_prazos = pd.read_excel(file_base, sheet_name='Base')
+def processar_regiao(cnpj, file_or_df, file_modelo):
+    if isinstance(file_or_df, pd.DataFrame):
+        df_prazos = file_or_df.copy()
+    else:
+        df_prazos = pd.read_excel(file_or_df, sheet_name='Base')
+        
     df_prazos['Nome da Região'] = df_prazos['Nome da Região'].astype(str).str.strip()
     df_prazos = df_prazos[df_prazos['Nome da Região'].notna() & (df_prazos['Nome da Região'].str.upper() != 'NAN') & (df_prazos['Nome da Região'] != '')]
-    
-    # LINHA DE REMOÇÃO DE DUPLICADAS RETIRADA AQUI
     
     df_prazos['NomeRegiao'] = df_prazos['Nome da Região'].str.upper()
     wb_modelo = load_workbook(file_modelo)
@@ -351,24 +371,511 @@ def gerar_restricoes_zip(texto_input, template_bytes, limite_linhas, categoria, 
     return zip_buffer
 
 # =============================================================================
+# NOVAS FUNÇÕES: GERADORES SELETIVOS LINCROS (FRETE & PRAZOS)
+# =============================================================================
+
+def gerar_tabela_frete_lincros(dados_json, cnpj="", nome_transp=""):
+    """Gera a Tabela de Frete (Preços) no modelo LINCROS com 4 seções empilhadas."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tabela de Frete"
+    
+    cnpj_usar = cnpj or dados_json.get("cnpj", "")
+    nome_usar = nome_transp or dados_json.get("nome_transportadora", "")
+    nome_tabela = dados_json.get("nome_tabela", "TABELA FRETE FRACIONADO")
+    vig_ini = dados_json.get("vigencia_inicio", "01/01/2026")
+    vig_fim = dados_json.get("vigencia_fim", "31/12/2026")
+    modal = dados_json.get("modal", "ROD")
+    taxas = dados_json.get("taxas", {})
+    
+    # 1. Cabeçalho
+    ws.cell(row=1, column=1, value="CNPJ - Nome da transportadora")
+    ws.cell(row=1, column=2, value=f"{cnpj_usar} - {nome_usar}")
+    
+    ws.cell(row=2, column=1, value="Nome da tabela")
+    ws.cell(row=2, column=2, value=nome_tabela)
+    
+    ws.cell(row=3, column=1, value="Inicio da vigência")
+    ws.cell(row=3, column=2, value=vig_ini)
+    
+    ws.cell(row=4, column=1, value="Fim da vigência")
+    ws.cell(row=4, column=2, value=vig_fim)
+    
+    ws.cell(row=5, column=1, value="Modal de transporte")
+    ws.cell(row=5, column=2, value=modal)
+    
+    # 2. Generalidades
+    ws.cell(row=7, column=1, value="2. Generalidades")
+    ws.cell(row=8, column=1, value="Ad Valorem (%)")
+    ws.cell(row=8, column=2, value="Ad Valorem (min)")
+    ws.cell(row=8, column=3, value="GRIS (%)")
+    ws.cell(row=8, column=4, value="GRIS (min)")
+    ws.cell(row=8, column=5, value="ICMS Destacado")
+    
+    ws.cell(row=9, column=1, value=taxas.get("ad_valorem_pct", 0.40))
+    ws.cell(row=9, column=2, value=taxas.get("ad_valorem_min", 5.00))
+    ws.cell(row=9, column=3, value=taxas.get("gris_pct", 0.30))
+    ws.cell(row=9, column=4, value=taxas.get("gris_min", 6.00))
+    ws.cell(row=9, column=5, value="VERDADEIRO" if taxas.get("icms_destacado", True) else "FALSO")
+    
+    # 3. Rotas e faixas de cálculo
+    ws.cell(row=11, column=1, value="3. Rotas e faixas de cálculo")
+    
+    regioes = dados_json.get("regioes", [])
+    faixas_peso = []
+    if regioes and "frete_peso" in regioes[0]:
+        faixas_peso = [item.get("peso_ate") for item in regioes[0]["frete_peso"]]
+    if not faixas_peso:
+        faixas_peso = [10, 20, 30, 50, 100]
+        
+    # Tipo da Faixa
+    ws.cell(row=12, column=1, value="Tipo da faixa")
+    col_idx = 4
+    for _ in faixas_peso:
+        ws.cell(row=12, column=col_idx, value="Peso Nominal")
+        col_idx += 1
+    ws.cell(row=12, column=col_idx, value="Peso Excedente")
+    col_idx += 1
+    ws.cell(row=12, column=col_idx, value="Valor da Mercadoria")
+    
+    # Intervalo da Faixa
+    ws.cell(row=13, column=1, value="Intervalo da faixa")
+    col_idx = 4
+    peso_anterior = 0.0
+    for p in faixas_peso:
+        ws.cell(row=13, column=col_idx, value=f"{peso_anterior + 0.0001:.4f} a {float(p):.4f}")
+        peso_anterior = float(p)
+        col_idx += 1
+    ws.cell(row=13, column=col_idx, value=f"{peso_anterior + 0.0001:.4f} a 9999999999.0000")
+    col_idx += 1
+    ws.cell(row=13, column=col_idx, value="0.0000 a 9999999999.0000")
+    
+    # Rota / Componente
+    ws.cell(row=14, column=1, value="Rota / Componente")
+    ws.cell(row=14, column=2, value="Origem")
+    ws.cell(row=14, column=3, value="Destino")
+    col_idx = 4
+    for _ in faixas_peso:
+        ws.cell(row=14, column=col_idx, value="Frete Peso (min)")
+        col_idx += 1
+    ws.cell(row=14, column=col_idx, value="Frete Peso")
+    col_idx += 1
+    ws.cell(row=14, column=col_idx, value="Pedágio")
+    
+    # Dados das regiões
+    origem_val = dados_json.get("origem_padrao", {}).get("valor", "ORIGEM")
+    row_curr = 15
+    for reg in regioes:
+        nome_reg = reg.get("nome_regiao", "")
+        ws.cell(row=row_curr, column=1, value=f"{origem_val} X {nome_reg}")
+        ws.cell(row=row_curr, column=2, value=origem_val)
+        ws.cell(row=row_curr, column=3, value=nome_reg)
+        
+        fp_lista = reg.get("frete_peso", [])
+        fp_map = {item.get("peso_ate"): item.get("valor") for item in fp_lista}
+        
+        c_idx = 4
+        for p in faixas_peso:
+            ws.cell(row=row_curr, column=c_idx, value=fp_map.get(p, 0.0))
+            c_idx += 1
+        ws.cell(row=row_curr, column=c_idx, value=reg.get("excedente_por_kg", 0.50))
+        c_idx += 1
+        ws.cell(row=row_curr, column=c_idx, value=reg.get("pedagio", 0.00))
+        row_curr += 1
+        
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+def gerar_tabela_prazo_lincros(df_base, cnpj="", nome_transp=""):
+    """Gera a Tabela de Prazos (prazo.xlsx) com as abas Prazo (geral) e Prazo (localizações)."""
+    wb = Workbook()
+    
+    # Aba 1: Prazo (geral)
+    ws_geral = wb.active
+    ws_geral.title = "Prazo (geral)"
+    
+    header_geral = [
+        "Código (sistema)", "Código (planilha)", "CNPJ da Transportadora", "Vigência Inicial", "Vigência Final",
+        "Descrição Prazo de Entrega", "Descrição Rota", "Código IBGE da Cidade", "Estado (Sigla)", "Região",
+        "CEP Inicial", "CEP Final", "Faixa de CEP", "Modal", "Somente dias úteis", "Prazo", "Tipo",
+        "Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"
+    ]
+    ws_geral.append([])
+    ws_geral.append([])
+    ws_geral.append([])
+    ws_geral.append(header_geral)
+    
+    row_geral = [
+        "", 1, cnpj, "01/01/2026", "31/12/2026",
+        f"PRAZO {nome_transp}".strip(), f"ROTA {nome_transp}".strip(), "", "", "",
+        "", "", "", "ROD", "VERDADEIRO", 1, "DIAS",
+        "FALSO", "VERDADEIRO", "VERDADEIRO", "VERDADEIRO", "VERDADEIRO", "VERDADEIRO", "FALSO"
+    ]
+    ws_geral.append(row_geral)
+    
+    # Aba 2: Prazo (localizações)
+    ws_loc = wb.create_sheet(title="Prazo (localizações)")
+    header_loc = [
+        "Código (sistema)", "Código (planilha)", "Código IBGE da Cidade", "Nome da cidade - UF",
+        "Estado", "Região", "Faixa de CEP", "Prazo", "Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"
+    ]
+    ws_loc.append([])
+    ws_loc.append([])
+    ws_loc.append([])
+    ws_loc.append(header_loc)
+    
+    for idx, row in df_base.iterrows():
+        ibge_val = str(row.get("Codigo IBGE", "")).split('.')[0].strip()
+        cid_uf = f"{row.get('Destino', '')} - {row.get('UF Destino', '')}"
+        prazo_val = row.get("Prazo", 1)
+        regiao_val = row.get("Nome da Região", "")
+        
+        dom = "VERDADEIRO" if str(row.get("DOMINGO", "")).upper() in ["VERDADEIRO", "TRUE", "S", "1"] else "FALSO"
+        seg = "VERDADEIRO" if str(row.get("SEGUNDA", "")).upper() in ["VERDADEIRO", "TRUE", "S", "1"] else "FALSO"
+        ter = "VERDADEIRO" if str(row.get("TERÇA", "")).upper() in ["VERDADEIRO", "TRUE", "S", "1"] else "FALSO"
+        qua = "VERDADEIRO" if str(row.get("QUARTA", "")).upper() in ["VERDADEIRO", "TRUE", "S", "1"] else "FALSO"
+        qui = "VERDADEIRO" if str(row.get("QUINTA", "")).upper() in ["VERDADEIRO", "TRUE", "S", "1"] else "FALSO"
+        sex = "VERDADEIRO" if str(row.get("SEXTA", "")).upper() in ["VERDADEIRO", "TRUE", "S", "1"] else "FALSO"
+        sab = "VERDADEIRO" if str(row.get("SABADO", "")).upper() in ["VERDADEIRO", "TRUE", "S", "1"] else "FALSO"
+        
+        ws_loc.append([
+            "", 1, ibge_val, cid_uf,
+            row.get("UF Destino", ""), regiao_val, "", prazo_val,
+            dom, seg, ter, qua, qui, sex, sab
+        ])
+        
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+# =============================================================================
+# MÓDULO DE EXTRAÇÃO INTELIGENTE VIA GEMINI API
+# =============================================================================
+
+def extrair_dados_tabela_ia(arquivo_bytes, nome_arquivo, api_key=None):
+    """Utiliza a API do Gemini para ler o arquivo da transportadora (PDF, Excel, Imagem ou Texto)
+    e extrair os dados estruturados de CNPJ, Praças, Preços, Taxas e Prazos."""
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    
+    if not key:
+        st.warning("⚠️ Chave GEMINI_API_KEY não detectada. Usando parser heurístico estruturado.")
+        return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
+    
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=key)
+    except Exception as e:
+        st.warning(f"Biblioteca google-genai não iniciou: {e}. Usando parser fallback.")
+        return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
+
+    prompt = """
+Você é um especialista em logística e tabelas de frete. Analise o documento/tabela fornecido da transportadora e extraia todos os dados de frete, regras, prazos e localidades em formato JSON estritamente conforme a estrutura solicitada.
+
+ATENÇÃO CRÍTICA SOBRE AS REGRAS DE NEGÓCIO:
+1. MANTENHA OS NOMES DAS PRAÇAS/REGIÕES EXATAMENTE COMO A TRANSPORTADORA DEFINIU (ex: "CAPITAL SP", "GRANDE SP", "INTERIOR SUL", "ROTA 101"). NÃO crie nomes genéricos se a tabela possui nomes específicos.
+2. Associe cada cidade/localidade à sua respectiva Praça/Região exatamente como a tabela indica.
+3. Extraia o CNPJ, Nome/Razão Social da transportadora, vigências e modal (padrão "ROD").
+4. Extraia a tabela de frete peso (faixas de peso em kg e seus respectivos valores).
+5. Extraia taxas adicionais como Ad Valorem (%), GRIS (%), Pedágio, Taxa de Coleta, etc.
+6. Extraia os prazos de entrega (em dias) e dias de atendimento (Segunda a Domingo).
+
+Formato JSON esperado de resposta:
+{
+  "cnpj": "12345678000199",
+  "nome_transportadora": "TRANSPORTADORA TESTE",
+  "nome_tabela": "TABELA FRETE FRACIONADO 2026",
+  "vigencia_inicio": "01/01/2026",
+  "vigencia_fim": "31/12/2026",
+  "modal": "ROD",
+  "taxas": {
+    "ad_valorem_pct": 0.4,
+    "ad_valorem_min": 5.0,
+    "gris_pct": 0.3,
+    "gris_min": 6.0,
+    "icms_destacado": true
+  },
+  "origem_padrao": {
+    "tipo": "Cidade (IBGE)",
+    "valor": "SAO PAULO"
+  },
+  "regioes": [
+    {
+      "nome_regiao": "CAPITAL-SP",
+      "cidades": [
+        {"cidade": "SAO PAULO", "uf": "SP", "prazo": 1},
+        {"cidade": "GUARULHOS", "uf": "SP", "prazo": 1}
+      ],
+      "frete_peso": [
+        {"peso_ate": 10, "valor": 30.0},
+        {"peso_ate": 20, "valor": 45.0},
+        {"peso_ate": 50, "valor": 80.0}
+      ],
+      "excedente_por_kg": 0.5,
+      "pedagio": 4.0,
+      "dias_atendimento": {"seg": true, "ter": true, "qua": true, "qui": true, "sex": true, "sab": false, "dom": false}
+    }
+  ]
+}
+Retorne APENAS o JSON puro, sem textos adicionais.
+"""
+
+    ext = nome_arquivo.split('.')[-1].lower()
+    if ext in ['pdf', 'png', 'jpg', 'jpeg']:
+        mime_map = {'pdf': 'application/pdf', 'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg'}
+        bytes_data = arquivo_bytes.getvalue() if hasattr(arquivo_bytes, 'getvalue') else arquivo_bytes
+        content_part = types.Part.from_bytes(data=bytes_data, mime_type=mime_map[ext])
+        contents = [content_part, prompt]
+    else:
+        try:
+            if ext in ['xlsx', 'xls']:
+                xls = pd.ExcelFile(arquivo_bytes)
+                sheets_summary = []
+                for sheet in xls.sheet_names:
+                    df_sheet = pd.read_excel(xls, sheet_name=sheet).head(150)
+                    sheets_summary.append(f"--- Aba: {sheet} ---\n" + df_sheet.to_string())
+                texto_tabela = "\n\n".join(sheets_summary)
+            else:
+                texto_tabela = arquivo_bytes.getvalue().decode('utf-8', errors='ignore')
+        except Exception:
+            texto_tabela = str(arquivo_bytes)
+        
+        contents = [f"Tabela da transportadora para extrair:\n\n{texto_tabela[:30000]}", prompt]
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=contents,
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        dados = json.loads(response.text)
+        return dados
+    except Exception as e:
+        st.error(f"Erro na chamada Gemini API: {e}. Alternando para extração heurística.")
+        return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
+
+def extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo):
+    """Fallback heurístico para ler arquivos Excel/CSV caso a API key da IA não esteja configurada."""
+    try:
+        ext = nome_arquivo.split('.')[-1].lower()
+        if ext in ['xlsx', 'xls']:
+            df = pd.read_excel(arquivo_bytes)
+        elif ext == 'csv':
+            df = pd.read_csv(arquivo_bytes)
+        else:
+            raise Exception("Formato não suportado no modo heurístico sem chave Gemini.")
+            
+        cidades = []
+        for idx, row in df.iterrows():
+            col_cid = next((c for c in df.columns if 'CIDADE' in str(c).upper() or 'DESTINO' in str(c).upper()), df.columns[0])
+            col_uf = next((c for c in df.columns if 'UF' in str(c).upper() or 'ESTADO' in str(c).upper()), df.columns[1] if len(df.columns) > 1 else df.columns[0])
+            col_reg = next((c for c in df.columns if 'REGIAO' in str(c).upper() or 'PRAÇA' in str(c).upper() or 'PRACA' in str(c).upper() or 'ROTA' in str(c).upper()), None)
+            col_prazo = next((c for c in df.columns if 'PRAZO' in str(c).upper()), None)
+            
+            nome_reg = str(row[col_reg]).upper() if col_reg else f"REGIAO-{str(row[col_uf]).upper()}"
+            prazo_val = int(row[col_prazo]) if col_prazo and str(row[col_prazo]).isdigit() else 2
+            
+            cidades.append({
+                "cidade": str(row[col_cid]),
+                "uf": str(row[col_uf]),
+                "prazo": prazo_val,
+                "regiao": nome_reg
+            })
+            
+        regioes_map = {}
+        for c in cidades:
+            reg_nome = c["regiao"]
+            if reg_nome not in regioes_map:
+                regioes_map[reg_nome] = []
+            regioes_map[reg_nome].append(c)
+            
+        regioes_lista = []
+        for reg_nome, c_list in regioes_map.items():
+            regioes_lista.append({
+                "nome_regiao": reg_nome,
+                "cidades": c_list,
+                "frete_peso": [
+                    {"peso_ate": 10, "valor": 35.0},
+                    {"peso_ate": 20, "valor": 50.0},
+                    {"peso_ate": 50, "valor": 85.0}
+                ],
+                "excedente_por_kg": 0.60,
+                "pedagio": 5.0,
+                "dias_atendimento": {"seg": True, "ter": True, "qua": True, "qui": True, "sex": True, "sab": False, "dom": False}
+            })
+            
+        return {
+            "cnpj": "12345678000100",
+            "nome_transportadora": "TRANSPORTADORA PROCESSADA",
+            "nome_tabela": "TABELA FRETE 2026",
+            "vigencia_inicio": "01/01/2026",
+            "vigencia_fim": "31/12/2026",
+            "modal": "ROD",
+            "taxas": {"ad_valorem_pct": 0.4, "ad_valorem_min": 5.0, "gris_pct": 0.3, "gris_min": 6.0, "icms_destacado": True},
+            "origem_padrao": {"tipo": "Cidade (IBGE)", "valor": "SAO PAULO"},
+            "regioes": regioes_lista
+        }
+    except Exception as e:
+        st.error(f"Erro no processamento heurístico: {e}")
+        return {"cnpj": "", "nome_transportadora": "", "regioes": []}
+
+def construir_df_base_do_json(dados_json):
+    """Converte o JSON extraído pela IA ou heurística em um DataFrame padronizado com IBGE."""
+    linhas = []
+    for reg in dados_json.get("regioes", []):
+        nome_reg = reg.get("nome_regiao", "").strip().upper()
+        dias = reg.get("dias_atendimento", {})
+        
+        for cid_obj in reg.get("cidades", []):
+            cid_nome = cid_obj.get("cidade", "")
+            uf_nome = cid_obj.get("uf", "")
+            prazo_val = cid_obj.get("prazo", 1)
+            
+            linhas.append({
+                "Nome da Região": nome_reg,
+                "Destino": cid_nome,
+                "UF Destino": uf_nome,
+                "Prazo": prazo_val,
+                "Codigo IBGE": "",
+                "DOMINGO": "VERDADEIRO" if dias.get("dom") else "FALSO",
+                "SEGUNDA": "VERDADEIRO" if dias.get("seg", True) else "FALSO",
+                "TERÇA": "VERDADEIRO" if dias.get("ter", True) else "FALSO",
+                "QUARTA": "VERDADEIRO" if dias.get("qua", True) else "FALSO",
+                "QUINTA": "VERDADEIRO" if dias.get("qui", True) else "FALSO",
+                "SEXTA": "VERDADEIRO" if dias.get("sex", True) else "FALSO",
+                "SABADO": "VERDADEIRO" if dias.get("sab") else "FALSO",
+                "FREQUENCIA": "STQQS"
+            })
+            
+    df_base = pd.DataFrame(linhas)
+    if not df_base.empty:
+        df_base, ex, ap, ne = processar_ibge(df_base)
+    return df_base
+
+# =============================================================================
 # INTERFACE DO STREAMLIT
 # =============================================================================
 
-st.title("📦 Ferramentas Gerais - Logística")
+st.title("📦 Ferramentas Logísticas & IA LINCROS")
 
 with st.sidebar:
-    st.header("⚙️ Configuração")
+    st.header("⚙️ Configurações Padrão")
     st.download_button(label="📥 Baixar Modelo Base (Vazio)", data=gerar_modelo_base_vazio(), file_name="Base_de_Origem_Template.xlsx", use_container_width=True)
     st.divider()
-    cnpj_global = st.text_input("CNPJ Transportadora Padrão")
-    nome_global = st.text_input("Nome Transportadora Padrão")
+    cnpj_global = st.text_input("CNPJ Transportadora Padrão", value="12345678000100")
+    nome_global = st.text_input("Nome Transportadora Padrão", value="TRANSPORTADORA LOG")
+    gemini_key_input = st.text_input("Chave Gemini API (Opcional)", type="password", help="Cole sua chave para leitura de PDF/Imagens via IA")
+    if gemini_key_input:
+        os.environ["GEMINI_API_KEY"] = gemini_key_input
+        
+    st.divider()
     if st.button("Atualizar Cache IBGE", use_container_width=True):
         API_Atualizar_Cache_IBGE()
-        st.success("Cache atualizado!")
+        st.success("Cache IBGE atualizado com sucesso!")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "🌍 Preencher IBGE", "⏱️ Prazos/Freq", "🗺️ Criar Região", "📍 Gerar Rotas", "🔄 Conv. S/N", "📅 Conv. STQQS", "👥 Restrições Por Pessoas"
+# Abas do aplicativo
+tab_ia, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "🤖 Processamento Inteligente (IA)",
+    "🌍 Preencher IBGE", 
+    "⏱️ Prazos/Freq", 
+    "🗺️ Criar Região", 
+    "📍 Gerar Rotas", 
+    "🔄 Conv. S/N", 
+    "📅 Conv. STQQS", 
+    "👥 Restrições Por Pessoas"
 ])
+
+# --- ABA INTELIGENTE COM IA ---
+with tab_ia:
+    st.markdown("### 🤖 Processamento Autônomo por IA")
+    st.info("Faça upload de qualquer tabela da transportadora (PDF, Excel, Imagem ou CSV). A IA lerá as **praças da transportadora**, cruzará os IBGEs e gerará os arquivos do LINCROS no modo selecionado.")
+    
+    col_up, col_opt = st.columns([2, 1])
+    file_ia = col_up.file_uploader("Arquivo da Transportadora (PDF, XLSX, CSV, PNG, JPG)", type=["pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"])
+    
+    modo_exportacao = col_opt.radio(
+        "Selecione o que deseja gerar:",
+        [
+            "📦 Kit Completo (Todas as Planilhas em ZIP)",
+            "💰 Apenas Tabela de Frete/Preços (frete.xlsx)",
+            "⏱️ Apenas Tabela de Prazos (prazo.xlsx)",
+            "🗺️ Apenas Regiões + Rotas (regiao.xlsx + rota.xlsx)"
+        ]
+    )
+    
+    col_orig1, col_orig2 = st.columns(2)
+    tipo_orig_ia = col_orig1.selectbox("Origem Padrão das Rotas", ["Cidade (IBGE)", "Região"])
+    if tipo_orig_ia == "Cidade (IBGE)":
+        lista_cidades = carregar_lista_cidades_ibge()
+        cid_sel = col_orig2.selectbox("Selecione a Cidade de Origem", options=[""] + lista_cidades, key="cid_orig_ia")
+        origem_val_ia = cid_sel.split("(")[-1].replace(")", "").strip() if cid_sel else "3550308"
+    else:
+        origem_val_ia = col_orig2.text_input("Nome da Região de Origem", value="SAO PAULO")
+
+    if file_ia and st.button("🚀 PROCESSAR COM IA & GERAR ARQUIVOS", use_container_width=True):
+        with st.spinner("Extraindo dados com IA, cruzando IBGE e montando estrutura LINCROS..."):
+            try:
+                dados_json = extrair_dados_tabela_ia(file_ia, file_ia.name, api_key=gemini_key_input)
+                cnpj_final = cnpj_global or dados_json.get("cnpj", "")
+                nome_final = (nome_global or dados_json.get("nome_transportadora", "")).upper()
+                
+                df_base_ia = construir_df_base_do_json(dados_json)
+                st.session_state['df_base_ia'] = df_base_ia
+                st.session_state['dados_json_ia'] = dados_json
+                
+                # Geração de arquivos
+                out_regiao = processar_regiao(cnpj_final, df_base_ia, ARQUIVO_MODELO_REGIAO)
+                out_rota = processar_rotas("1", cnpj_final, nome_final, "", tipo_orig_ia, origem_val_ia, out_regiao, ARQUIVO_MODELO_ROTA)
+                out_frete = gerar_tabela_frete_lincros(dados_json, cnpj=cnpj_final, nome_transp=nome_final)
+                out_prazo = gerar_tabela_prazo_lincros(df_base_ia, cnpj=cnpj_final, nome_transp=nome_final)
+                
+                if "Kit Completo" in modo_exportacao:
+                    zip_buf = io.BytesIO()
+                    with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zf:
+                        zf.writestr(f"regiao_{nome_final}.xlsx", out_regiao.getvalue())
+                        zf.writestr(f"rota_{nome_final}.xlsx", out_rota.getvalue())
+                        zf.writestr(f"frete_{nome_final}.xlsx", out_frete.getvalue())
+                        zf.writestr(f"prazo_{nome_final}.xlsx", out_prazo.getvalue())
+                    zip_buf.seek(0)
+                    st.session_state['out_ia_result'] = zip_buf
+                    st.session_state['out_ia_ext'] = "zip"
+                    st.session_state['out_ia_name'] = f"Kit_LINCROS_{nome_final}.zip"
+                    
+                elif "Apenas Tabela de Frete" in modo_exportacao:
+                    st.session_state['out_ia_result'] = out_frete
+                    st.session_state['out_ia_ext'] = "xlsx"
+                    st.session_state['out_ia_name'] = f"Frete_{nome_final}.xlsx"
+                    
+                elif "Apenas Tabela de Prazos" in modo_exportacao:
+                    st.session_state['out_ia_result'] = out_prazo
+                    st.session_state['out_ia_ext'] = "xlsx"
+                    st.session_state['out_ia_name'] = f"Prazos_{nome_final}.xlsx"
+                    
+                else:
+                    zip_buf = io.BytesIO()
+                    with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zf:
+                        zf.writestr(f"regiao_{nome_final}.xlsx", out_regiao.getvalue())
+                        zf.writestr(f"rota_{nome_final}.xlsx", out_rota.getvalue())
+                    zip_buf.seek(0)
+                    st.session_state['out_ia_result'] = zip_buf
+                    st.session_state['out_ia_ext'] = "zip"
+                    st.session_state['out_ia_name'] = f"Regioes_e_Rotas_{nome_final}.zip"
+                    
+                st.success(f"✅ Processamento concluído! Praças encontradas: {len(dados_json.get('regioes', []))} | Cidades cruzadas: {len(df_base_ia)}")
+            except Exception as e:
+                st.error(f"Erro durante o processamento: {e}")
+
+    if 'out_ia_result' in st.session_state:
+        st.download_button(
+            label=f"📥 BAIXAR {st.session_state['out_ia_name']}",
+            data=st.session_state['out_ia_result'],
+            file_name=st.session_state['out_ia_name'],
+            mime="application/zip" if st.session_state['out_ia_ext'] == "zip" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 # --- ABA 1: IBGE ---
 with tab1:
