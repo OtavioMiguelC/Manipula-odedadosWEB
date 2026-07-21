@@ -610,15 +610,18 @@ def atualizar_dicionario_com_extracao(dados_json):
 # MÓDULO DE EXTRAÇÃO INTELIGENTE VIA GEMINI API
 # =============================================================================
 
-def extrair_dados_tabela_ia(arquivo_bytes, nome_arquivo, api_key=None, modelo_nome="gemini-2.5-flash"):
-    """Utiliza a API do Gemini para ler o arquivo da transportadora (PDF, Excel, Imagem ou Texto)
-    e extrair os dados estruturados de CNPJ, Praças, Preços, Taxas e Prazos."""
+def extrair_dados_tabela_ia(arquivos_input, api_key=None, modelo_nome="gemini-2.5-flash"):
+    """Aceita um único arquivo ou uma lista de múltiplos arquivos (ex: Tabela de Preços + Relação Complementar de Cidades)."""
     secrets_key = st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets else None
     key = api_key or os.environ.get("GEMINI_API_KEY") or secrets_key
     
+    lista_arquivos = arquivos_input if isinstance(arquivos_input, list) else [arquivos_input]
+    if not lista_arquivos:
+        return {"cnpj": "", "nome_transportadora": "", "regioes": []}
+
     if not key:
         st.warning("⚠️ Chave GEMINI_API_KEY não detectada. Usando parser heurístico estruturado.")
-        return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
+        return extrair_dados_tabela_heuristico(lista_arquivos[0], lista_arquivos[0].name)
     
     try:
         from google import genai
@@ -626,87 +629,95 @@ def extrair_dados_tabela_ia(arquivo_bytes, nome_arquivo, api_key=None, modelo_no
         client = genai.Client(api_key=key)
     except Exception as e:
         st.warning(f"Biblioteca google-genai não iniciou: {e}. Usando parser fallback.")
-        return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
+        return extrair_dados_tabela_heuristico(lista_arquivos[0], lista_arquivos[0].name)
 
     memoria_atual = carregar_memoria_dicionario()
     prompt_dicionario = json.dumps(memoria_atual.get("dicionario_pracas", {}), ensure_ascii=False)
 
     prompt = f"""
-Você é um especialista em logística e tabelas de frete. Analise o documento/tabela fornecido da transportadora e extraia todos os dados de frete, regras, prazos e localidades em formato JSON estritamente conforme a estrutura solicitada.
+Você é um especialista em logística e tabelas de frete. Você recebeu um ou MÚLTIPLOS documentos da transportadora (ex: Tabela de Preços/Rotas + Relação Complementar de Cidades por Praça).
 
-REGRA 1 (DICIONÁRIO DE APRENDIZADO PREEXISTENTE):
-Utilize o dicionário de praças/regiões conhecidas abaixo como PRIMEIRA REFERÊNCIA para associar cidades e regiões:
+INSTRUÇÃO PARA MÚLTIPLOS ARQUIVOS:
+Cruze as informações entre todos os arquivos fornecidos. Se um arquivo contém a tabela de preços por rota/praça e outro arquivo contém a lista complementar de cidades por rota/praça, CRUZE AMBOS os arquivos para montar a lista completa de cidades associadas a cada praça/região!
+
+REGRA (DICIONÁRIO DE APRENDIZADO PREEXISTENTE):
+Utilize o dicionário de praças/regiões conhecidas abaixo como PRIMEIRA REFERÊNCIA:
 {prompt_dicionario}
 
 ATENÇÃO CRÍTICA SOBRE AS REGRAS DE NEGÓCIO:
 1. MANTENHA OS NOMES DAS PRAÇAS/REGIÕES EXATAMENTE COMO A TRANSPORTADORA DEFINIU (ex: "CAPITAL SP", "GRANDE SP", "INTERIOR SUL", "ROTA 101"). NÃO crie nomes genéricos se a tabela possui nomes específicos.
-2. Associe cada cidade/localidade à sua respectiva Praça/Região exatamente como a tabela indica.
+2. Associe cada cidade/localidade à sua respectiva Praça/Região exatamente como a tabela e a relação complementar indicam.
 3. Extraia o CNPJ, Nome/Razão Social da transportadora, vigências e modal (padrão "ROD").
 4. Extraia a tabela de frete peso (faixas de peso em kg e seus respectivos valores).
 5. Extraia taxas adicionais como Ad Valorem (%), GRIS (%), Pedágio, Taxa de Coleta, etc.
 6. Extraia os prazos de entrega (em dias) e dias de atendimento (Segunda a Domingo).
 
 Formato JSON esperado de resposta:
-{
+{{
   "cnpj": "12345678000199",
   "nome_transportadora": "TRANSPORTADORA TESTE",
   "nome_tabela": "TABELA FRETE FRACIONADO 2026",
   "vigencia_inicio": "01/01/2026",
   "vigencia_fim": "31/12/2026",
   "modal": "ROD",
-  "taxas": {
+  "taxas": {{
     "ad_valorem_pct": 0.4,
     "ad_valorem_min": 5.0,
     "gris_pct": 0.3,
     "gris_min": 6.0,
     "icms_destacado": true
-  },
-  "origem_padrao": {
+  }},
+  "origem_padrao": {{
     "tipo": "Cidade (IBGE)",
     "valor": "SAO PAULO"
-  },
+  }},
   "regioes": [
-    {
+    {{
       "nome_regiao": "CAPITAL-SP",
       "cidades": [
-        {"cidade": "SAO PAULO", "uf": "SP", "prazo": 1},
-        {"cidade": "GUARULHOS", "uf": "SP", "prazo": 1}
+        {{"cidade": "SAO PAULO", "uf": "SP", "prazo": 1}},
+        {{"cidade": "GUARULHOS", "uf": "SP", "prazo": 1}}
       ],
       "frete_peso": [
-        {"peso_ate": 10, "valor": 30.0},
-        {"peso_ate": 20, "valor": 45.0},
-        {"peso_ate": 50, "valor": 80.0}
+        {{"peso_ate": 10, "valor": 30.0}},
+        {{"peso_ate": 20, "valor": 45.0}},
+        {{"peso_ate": 50, "valor": 80.0}}
       ],
       "excedente_por_kg": 0.5,
       "pedagio": 4.0,
-      "dias_atendimento": {"seg": true, "ter": true, "qua": true, "qui": true, "sex": true, "sab": false, "dom": false}
-    }
+      "dias_atendimento": {{"seg": true, "ter": true, "qua": true, "qui": true, "sex": true, "sab": false, "dom": false}}
+    }}
   ]
-}
+}}
 Retorne APENAS o JSON puro, sem textos adicionais.
 """
 
-    ext = nome_arquivo.split('.')[-1].lower()
-    if ext in ['pdf', 'png', 'jpg', 'jpeg']:
-        mime_map = {'pdf': 'application/pdf', 'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg'}
-        bytes_data = arquivo_bytes.getvalue() if hasattr(arquivo_bytes, 'getvalue') else arquivo_bytes
-        content_part = types.Part.from_bytes(data=bytes_data, mime_type=mime_map[ext])
-        contents = [content_part, prompt]
-    else:
-        try:
-            if ext in ['xlsx', 'xls']:
-                xls = pd.ExcelFile(arquivo_bytes)
-                sheets_summary = []
-                for sheet in xls.sheet_names:
-                    df_sheet = pd.read_excel(xls, sheet_name=sheet).head(150)
-                    sheets_summary.append(f"--- Aba: {sheet} ---\n" + df_sheet.to_string())
-                texto_tabela = "\n\n".join(sheets_summary)
-            else:
-                texto_tabela = arquivo_bytes.getvalue().decode('utf-8', errors='ignore')
-        except Exception:
-            texto_tabela = str(arquivo_bytes)
-        
-        contents = [f"Tabela da transportadora para extrair:\n\n{texto_tabela[:30000]}", prompt]
+    contents = []
+    for f in lista_arquivos:
+        nome_f = f.name
+        ext = nome_f.split('.')[-1].lower()
+        if ext in ['pdf', 'png', 'jpg', 'jpeg']:
+            mime_map = {'pdf': 'application/pdf', 'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg'}
+            bytes_data = f.getvalue() if hasattr(f, 'getvalue') else f
+            content_part = types.Part.from_bytes(data=bytes_data, mime_type=mime_map[ext])
+            contents.append(f"--- Documento: {nome_f} ---")
+            contents.append(content_part)
+        else:
+            try:
+                if ext in ['xlsx', 'xls']:
+                    xls = pd.ExcelFile(f)
+                    sheets_summary = []
+                    for sheet in xls.sheet_names:
+                        df_sheet = pd.read_excel(xls, sheet_name=sheet).head(150)
+                        sheets_summary.append(f"Aba: {sheet}\n" + df_sheet.to_string())
+                    texto_tabela = "\n\n".join(sheets_summary)
+                else:
+                    texto_tabela = f.getvalue().decode('utf-8', errors='ignore')
+            except Exception:
+                texto_tabela = str(f)
+            contents.append(f"--- Documento Tabela: {nome_f} ---\n{texto_tabela[:30000]}")
+
+    contents.append(prompt)
 
     try:
         model_clean = modelo_nome.split(" ")[0].strip() if " " in modelo_nome else modelo_nome
@@ -889,7 +900,7 @@ with tab_ia:
     st.info("Faça upload de qualquer tabela da transportadora (PDF, Excel, Imagem ou CSV). A IA lerá as **praças da transportadora**, cruzará os IBGEs e gerará os arquivos do LINCROS no modo selecionado.")
     
     col_up, col_opt = st.columns([2, 1])
-    file_ia = col_up.file_uploader("Arquivo da Transportadora (PDF, XLSX, CSV, PNG, JPG)", type=["pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"])
+    file_ia = col_up.file_uploader("Arquivo(s) da Transportadora (Envie 1 ou mais arquivos: Tabela + Cidades)", type=["pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"], accept_multiple_files=True)
     
     modo_exportacao = col_opt.radio(
         "Selecione o que deseja gerar:",
@@ -926,7 +937,7 @@ with tab_ia:
     if file_ia and st.button("🚀 PROCESSAR COM IA & GERAR ARQUIVOS", use_container_width=True):
         with st.spinner(f"Extraindo dados com IA ({modelo_id_limpo}), cruzando IBGE e montando estrutura LINCROS..."):
             try:
-                dados_json = extrair_dados_tabela_ia(file_ia, file_ia.name, api_key=gemini_key_input, modelo_nome=modelo_id_limpo)
+                dados_json = extrair_dados_tabela_ia(file_ia, modelo_nome=modelo_id_limpo)
                 cnpj_final = cnpj_global or dados_json.get("cnpj", "")
                 nome_final = (nome_global or dados_json.get("nome_transportadora", "")).upper()
                 
