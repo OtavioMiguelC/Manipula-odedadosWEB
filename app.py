@@ -730,8 +730,24 @@ Retorne APENAS o JSON puro, sem textos adicionais.
         atualizar_dicionario_com_extracao(dados)
         return dados
     except Exception as e:
-        st.error(f"Erro na chamada Gemini API ({modelo_nome}): {e}. Alternando para extração heurística.")
-        return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
+        err_msg = str(e)
+        if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
+            st.warning(f"⚠️ O modelo '{modelo_nome}' não possui cota no plano gratuito. Redirecionando automaticamente para 'gemini-2.5-flash'...")
+            try:
+                response_fallback = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=contents,
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                )
+                dados_fallback = json.loads(response_fallback.text)
+                atualizar_dicionario_com_extracao(dados_fallback)
+                return dados_fallback
+            except Exception as e_fb:
+                st.error(f"Falha na tentativa com gemini-2.5-flash: {e_fb}")
+        else:
+            st.error(f"Erro na chamada Gemini API ({modelo_nome}): {e}.")
+
+        return extrair_dados_tabela_heuristico(lista_arquivos[0], lista_arquivos[0].name)
 
 
 def extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo):
