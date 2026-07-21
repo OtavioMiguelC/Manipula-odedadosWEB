@@ -14,7 +14,7 @@ import re
 # =============================================================================
 # CONFIGURAÇÕES GERAIS E CONSTANTES
 # =============================================================================
-st.set_page_config(page_title="Ferramentas Logísticas - LINCROS AI", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ferramentas Logísticas - Consolida AI", page_icon="📦", layout="wide")
 
 CAMINHO_CACHE_IBGE = 'municipios_ibge_cache.json'
 ARQUIVO_MODELO_REGIAO = 'Modelo Região.xlsx'
@@ -552,6 +552,61 @@ def gerar_tabela_prazo_lincros(df_base, cnpj="", nome_transp=""):
     return output
 
 # =============================================================================
+# DICIONÁRIO DE APRENDIZADO & MEMÓRIA DA IA
+# =============================================================================
+
+CAMINHO_MEMORIA_DICIONARIO = 'memoria_aprendizado.json'
+
+def carregar_memoria_dicionario():
+    if not os.path.exists(CAMINHO_MEMORIA_DICIONARIO):
+        memoria_inicial = {
+            "dicionario_pracas": {
+                "CAPITAL SP": ["SAO PAULO", "GUARULHOS", "OSASCO", "SANTO ANDRE", "SANARDO DO CAMPO", "SAO CAETANO DO SUL"],
+                "INTERIOR SP": ["CAMPINAS", "SOROCABA", "RIBEIRAO PRETO", "SANTA BARBARA DO ESTE", "JUNDIAI"],
+                "GRANDE BH": ["BELO HORIZONTE", "CONTAGEM", "BETIM"]
+            },
+            "sinonimos_cidades": {
+                "S. PAULO": "SAO PAULO",
+                "S PAULO": "SAO PAULO",
+                "B. HORIZONTE": "BELO HORIZONTE"
+            }
+        }
+        with open(CAMINHO_MEMORIA_DICIONARIO, 'w', encoding='utf-8') as f:
+            json.dump(memoria_inicial, f, ensure_ascii=False, indent=4)
+        return memoria_inicial
+    try:
+        with open(CAMINHO_MEMORIA_DICIONARIO, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {"dicionario_pracas": {}, "sinonimos_cidades": {}}
+
+def salvar_memoria_dicionario(dados_memoria):
+    try:
+        with open(CAMINHO_MEMORIA_DICIONARIO, 'w', encoding='utf-8') as f:
+            json.dump(dados_memoria, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception:
+        return False
+
+def atualizar_dicionario_com_extracao(dados_json):
+    mem = carregar_memoria_dicionario()
+    pracas_dict = mem.get("dicionario_pracas", {})
+    
+    for reg in dados_json.get("regioes", []):
+        nome_reg = reg.get("nome_regiao", "").strip().upper()
+        if not nome_reg: continue
+        if nome_reg not in pracas_dict:
+            pracas_dict[nome_reg] = []
+            
+        for cid_obj in reg.get("cidades", []):
+            cid_nome = normalizar(cid_obj.get("cidade", ""))
+            if cid_nome and cid_nome not in pracas_dict[nome_reg]:
+                pracas_dict[nome_reg].append(cid_nome)
+                
+    mem["dicionario_pracas"] = pracas_dict
+    salvar_memoria_dicionario(mem)
+
+# =============================================================================
 # MÓDULO DE EXTRAÇÃO INTELIGENTE VIA GEMINI API
 # =============================================================================
 
@@ -573,8 +628,15 @@ def extrair_dados_tabela_ia(arquivo_bytes, nome_arquivo, api_key=None, modelo_no
         st.warning(f"Biblioteca google-genai não iniciou: {e}. Usando parser fallback.")
         return extrair_dados_tabela_heuristico(arquivo_bytes, nome_arquivo)
 
-    prompt = """
+    memoria_atual = carregar_memoria_dicionario()
+    prompt_dicionario = json.dumps(memoria_atual.get("dicionario_pracas", {}), ensure_ascii=False)
+
+    prompt = f"""
 Você é um especialista em logística e tabelas de frete. Analise o documento/tabela fornecido da transportadora e extraia todos os dados de frete, regras, prazos e localidades em formato JSON estritamente conforme a estrutura solicitada.
+
+REGRA 1 (DICIONÁRIO DE APRENDIZADO PREEXISTENTE):
+Utilize o dicionário de praças/regiões conhecidas abaixo como PRIMEIRA REFERÊNCIA para associar cidades e regiões:
+{prompt_dicionario}
 
 ATENÇÃO CRÍTICA SOBRE AS REGRAS DE NEGÓCIO:
 1. MANTENHA OS NOMES DAS PRAÇAS/REGIÕES EXATAMENTE COMO A TRANSPORTADORA DEFINIU (ex: "CAPITAL SP", "GRANDE SP", "INTERIOR SUL", "ROTA 101"). NÃO crie nomes genéricos se a tabela possui nomes específicos.
@@ -654,6 +716,7 @@ Retorne APENAS o JSON puro, sem textos adicionais.
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
         dados = json.loads(response.text)
+        atualizar_dicionario_com_extracao(dados)
         return dados
     except Exception as e:
         st.error(f"Erro na chamada Gemini API ({modelo_nome}): {e}. Alternando para extração heurística.")
@@ -762,7 +825,7 @@ def construir_df_base_do_json(dados_json):
 # INTERFACE DO STREAMLIT
 # =============================================================================
 
-st.title("📦 Ferramentas Logísticas & IA LINCROS")
+st.title("📦 Ferramentas Logísticas & IA Consolida")
 
 with st.sidebar:
     st.header("⚙️ Configurações Padrão")
@@ -770,9 +833,15 @@ with st.sidebar:
     st.divider()
     cnpj_global = st.text_input("CNPJ Transportadora Padrão", value="12345678000100")
     nome_global = st.text_input("Nome Transportadora Padrão", value="TRANSPORTADORA LOG")
-    gemini_key_input = st.text_input("Chave Gemini API (Opcional)", type="password", help="Cole sua chave para leitura de PDF/Imagens via IA")
-    if gemini_key_input:
-        os.environ["GEMINI_API_KEY"] = gemini_key_input
+    
+    st.divider()
+    has_secrets_key = hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]
+    if has_secrets_key:
+        st.success("🟢 Chave Gemini API Ativa (Secrets)")
+    elif os.environ.get("GEMINI_API_KEY"):
+        st.success("🟢 Chave Gemini API Ativa (Ambiente)")
+    else:
+        st.info("ℹ️ Chave não detectada (Leitor Padrão)")
         
     st.divider()
     if st.button("Atualizar Cache IBGE", use_container_width=True):
@@ -780,8 +849,9 @@ with st.sidebar:
         st.success("Cache IBGE atualizado com sucesso!")
 
 # Abas do aplicativo
-tab_ia, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab_ia, tab_dic, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🤖 Processamento Inteligente (IA)",
+    "🧠 Dicionário de Aprendizado",
     "🌍 Preencher IBGE", 
     "⏱️ Prazos/Freq", 
     "🗺️ Criar Região", 
@@ -791,8 +861,30 @@ tab_ia, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "👥 Restrições Por Pessoas"
 ])
 
+# --- ABA DICIONÁRIO DE APRENDIZADO ---
+with tab_dic:
+    st.markdown("### 🧠 Dicionário de Aprendizado & Memória de Praças")
+    st.info("Este dicionário é consultado como PRIMEIRA REGRA pela IA. Cada nova tabela processada expande automaticamente este banco de memória com novas praças e cidades.")
+    
+    memoria_exibir = carregar_memoria_dicionario()
+    pracas = memoria_exibir.get("dicionario_pracas", {})
+    
+    st.markdown("#### 📍 Praças e Cidades Mapeadas no Dicionário")
+    for praca_nome, cidades_list in pracas.items():
+        with st.expander(f"🔹 {praca_nome} ({len(cidades_list)} cidades mapeadas)"):
+            st.write(", ".join(cidades_list) if cidades_list else "Nenhuma cidade cadastrada.")
+            
+    st.divider()
+    if st.button("🗑️ Resetar Dicionário para Padrão Inicial"):
+        if os.path.exists(CAMINHO_MEMORIA_DICIONARIO):
+            os.remove(CAMINHO_MEMORIA_DICIONARIO)
+        carregar_memoria_dicionario()
+        st.success("Dicionário resetado com sucesso!")
+        st.rerun()
+
 # --- ABA INTELIGENTE COM IA ---
 with tab_ia:
+
     st.markdown("### 🤖 Processamento Autônomo por IA")
     st.info("Faça upload de qualquer tabela da transportadora (PDF, Excel, Imagem ou CSV). A IA lerá as **praças da transportadora**, cruzará os IBGEs e gerará os arquivos do LINCROS no modo selecionado.")
     
