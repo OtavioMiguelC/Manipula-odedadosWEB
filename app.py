@@ -558,7 +558,8 @@ def gerar_tabela_prazo_lincros(df_base, cnpj="", nome_transp=""):
 def extrair_dados_tabela_ia(arquivo_bytes, nome_arquivo, api_key=None):
     """Utiliza a API do Gemini para ler o arquivo da transportadora (PDF, Excel, Imagem ou Texto)
     e extrair os dados estruturados de CNPJ, Praças, Preços, Taxas e Prazos."""
-    key = api_key or os.environ.get("GEMINI_API_KEY")
+    secrets_key = st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets else None
+    key = api_key or os.environ.get("GEMINI_API_KEY") or secrets_key
     
     if not key:
         st.warning("⚠️ Chave GEMINI_API_KEY não detectada. Usando parser heurístico estruturado.")
