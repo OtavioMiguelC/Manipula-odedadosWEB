@@ -70,7 +70,7 @@ def gerar_modelo_base_vazio():
     wb = Workbook()
     ws = wb.active
     ws.title = "Base"
-    headers = ["Nome da Região", "Destino", "UF Destino", "Prazo", "Codigo IBGE", "DOMINGO", "SEGUNDA", "TERÇA", "QUARTA", "QUINTA", "SEXTA", "SABADO", "FREQUENCIA"]
+    headers = ["Nome da Região", "Destino", "UF Destino", "CEP Inicial", "CEP Final", "Prazo", "Codigo IBGE", "DOMINGO", "SEGUNDA", "TERÇA", "QUARTA", "QUINTA", "SEXTA", "SABADO", "FREQUENCIA"]
     ws.append(headers)
     output = io.BytesIO()
     wb.save(output)
@@ -432,14 +432,47 @@ def processar_regiao(cnpj, file_or_df, file_modelo):
     
     df_prazos['NomeRegiao'] = df_prazos['Nome da Região'].str.upper()
     wb_modelo = load_workbook(file_modelo)
-    ws_regioes = wb_modelo['regioes']; ws_localizacoes = wb_modelo['localizacoes_atendidas']
+    ws_regioes = wb_modelo['regioes']
+    ws_localizacoes = wb_modelo['localizacoes_atendidas']
+
     for ws in [ws_regioes, ws_localizacoes]:
         for row in ws.iter_rows(min_row=5, max_row=ws.max_row):
             for cell in row: cell.value = None
+
     for i, nome_regiao in enumerate(df_prazos['NomeRegiao'].unique(), start=5):
-        ws_regioes[f'B{i}'] = cnpj; ws_regioes[f'C{i}'] = nome_regiao; ws_regioes[f'D{i}'] = "VERDADEIRO"
-    for i, row in enumerate(df_prazos.iterrows(), start=5):
-        ws_localizacoes[f'B{i}'] = row[1]['NomeRegiao']; ws_localizacoes[f'E{i}'] = row[1]['Codigo IBGE']
+        ws_regioes[f'B{i}'] = cnpj
+        ws_regioes[f'C{i}'] = nome_regiao
+        ws_regioes[f'D{i}'] = "VERDADEIRO"
+
+    # Mapeamento dinâmico de colunas de CEP e IBGE
+    col_map = {str(col).strip().upper(): col for col in df_prazos.columns}
+    col_cep_ini = next((col_map[c] for c in col_map if 'CEP' in c and ('INI' in c or 'INICIAL' in c)), None)
+    if not col_cep_ini:
+        col_cep_ini = next((col_map[c] for c in col_map if 'CEP' in c and 'FIM' not in c and 'FINAL' not in c), None)
+        
+    col_cep_fim = next((col_map[c] for c in col_map if 'CEP' in c and ('FIM' in c or 'FINAL' in c)), None)
+    col_ibge = next((col_map[c] for c in col_map if 'IBGE' in c), None)
+
+    for i, (_, row) in enumerate(df_prazos.iterrows(), start=5):
+        ws_localizacoes[f'B{i}'] = row['NomeRegiao']
+        
+        # Extração dos CEPs e IBGE da linha
+        val_cep_ini = limpar_cep(row.get(col_cep_ini, "")) if col_cep_ini else ""
+        val_cep_fim = limpar_cep(row.get(col_cep_fim, "")) if col_cep_fim else val_cep_ini
+        
+        val_ibge = str(row.get(col_ibge, "")).split('.')[0].strip() if col_ibge and pd.notna(row.get(col_ibge)) else ""
+        if val_ibge == "nan": val_ibge = ""
+
+        # Preenchimento no Modelo Região Lincros:
+        # B: Região | C: CEP Inicial | D: CEP Final | E: Código IBGE
+        if val_cep_ini:
+            ws_localizacoes[f'C{i}'] = val_cep_ini
+            ws_localizacoes[f'D{i}'] = val_cep_fim if val_cep_fim else val_cep_ini
+            if val_ibge:
+                ws_localizacoes[f'E{i}'] = val_ibge
+        elif val_ibge:
+            ws_localizacoes[f'E{i}'] = val_ibge
+
     output = io.BytesIO()
     wb_modelo.save(output)
     output.seek(0)
