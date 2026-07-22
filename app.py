@@ -515,24 +515,75 @@ def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc
     return output
 
 def converter_freq(file):
-    wb = load_workbook(file); ws = wb[NOME_ABA]
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=6, max_col=12):
-        for cell in row:
-            valor = str(cell.value).strip().upper() if cell.value is not None else ""
-            if valor == "S": cell.value = "VERDADEIRO"
-            elif valor == "N": cell.value = "FALSO"
-    output = io.BytesIO(); wb.save(output); output.seek(0); return output
+    wb = load_workbook(file)
+    ws = wb[NOME_ABA] if NOME_ABA in wb.sheetnames else wb.active
+    
+    # Identificar dinamicamente as colunas dos dias pelos cabeçalhos na linha 1
+    dias_alvo = ["DOMINGO", "SEGUNDA", "TERÇA", "QUARTA", "QUINTA", "SEXTA", "SABADO"]
+    col_indices = []
+    
+    for cell in ws[1]:
+        val = str(cell.value or "").strip().upper()
+        if val in dias_alvo or any(d in val for d in ["SEG", "TER", "QUA", "QUI", "SEX", "SAB", "DOM"]):
+            col_indices.append(cell.column)
+
+    # Fallback caso não encontre cabeçalhos
+    if not col_indices:
+        col_indices = list(range(8, 15))
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for col_idx in col_indices:
+            if col_idx <= len(row):
+                cell = row[col_idx - 1]
+                valor = str(cell.value).strip().upper() if cell.value is not None else ""
+                if valor in ["S", "SIM", "TRUE", "X", "1"]:
+                    cell.value = "VERDADEIRO"
+                elif valor in ["N", "NÃO", "NAO", "FALSE", "0"]:
+                    cell.value = "FALSO"
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
 
 def converter_freq_txt(file):
-    wb = load_workbook(file); ws = wb.active
-    colunas_destino = [7, 8, 9, 10, 11, 12]; letras_referencia = ['S', 'T', 'Q', 'Q', 'S', 'S']
+    wb = load_workbook(file)
+    ws = wb[NOME_ABA] if NOME_ABA in wb.sheetnames else wb.active
+    
+    # Identificar dinamicamente a coluna FREQUENCIA e as colunas dos dias
+    col_freq_idx = None
+    dias_cols = {}
+    padroes = {'SEG': 'SEGUNDA', 'TER': 'TERÇA', 'QUA': 'QUARTA', 'QUI': 'QUINTA', 'SEX': 'SEXTA', 'SAB': 'SABADO'}
+    
+    for cell in ws[1]:
+        val = str(cell.value or "").strip().upper()
+        if "FREQ" in val:
+            col_freq_idx = cell.column
+        for p_key, d_nome in padroes.items():
+            if p_key in val or d_nome in val:
+                dias_cols[p_key] = cell.column
+
+    letras_ref = [('SEG', 'S'), ('TER', 'T'), ('QUA', 'Q'), ('QUI', 'Q'), ('SEX', 'S'), ('SAB', 'S')]
+    
     for row in ws.iter_rows(min_row=2):
-        texto_raw = str(row[12].value or "").strip().upper()
-        for i, col_idx in enumerate(colunas_destino):
-            if i < len(texto_raw) and texto_raw[i] == letras_referencia[i]: row[col_idx - 1].value = True
-            else: row[col_idx - 1].value = False
-        row[5].value = False
-    output = io.BytesIO(); wb.save(output); output.seek(0); return output
+        txt_raw = ""
+        if col_freq_idx and col_freq_idx <= len(row):
+            txt_raw = str(row[col_freq_idx - 1].value or "").strip().upper()
+        else:
+            txt_raw = str(row[-1].value or "").strip().upper()
+
+        for i, (p_key, letra) in enumerate(letras_ref):
+            if p_key in dias_cols:
+                col_idx = dias_cols[p_key] - 1
+                if i < len(txt_raw) and txt_raw[i] == letra:
+                    row[col_idx].value = "VERDADEIRO"
+                else:
+                    row[col_idx].value = "FALSO"
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
 
 def gerar_restricoes_zip(texto_input, template_bytes, limite_linhas, categoria, tipo_f_j, usar_valor):
     linhas = [l for l in texto_input.split('\n') if l.strip()]
