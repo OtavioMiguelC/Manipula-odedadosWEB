@@ -101,7 +101,7 @@ def limpar_cep(cep_raw):
     return cep_str.zfill(8)
 
 def consultar_cep_api(cep_limpo):
-    """Consulta cidade e UF por CEP utilizando ViaCEP com fallbacks para BrasilAPI."""
+    """Consulta cidade e UF por CEP utilizando ViaCEP, AwesomeAPI, ApiCEP e BrasilAPI."""
     if not cep_limpo or len(cep_limpo) != 8:
         return None, None, f"CEP Inválido ({cep_limpo})"
     
@@ -109,13 +109,15 @@ def consultar_cep_api(cep_limpo):
         st.session_state["cache_cep_api"] = {}
     
     cache = st.session_state["cache_cep_api"]
-    if cep_limpo in cache:
+    if cep_limpo in cache and cache[cep_limpo][0] is not None:
         return cache[cep_limpo]
+
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
     # 1. ViaCEP
     try:
         url_viacep = f"https://viacep.com.br/ws/{cep_limpo}/json/"
-        resp = requests.get(url_viacep, timeout=5)
+        resp = requests.get(url_viacep, headers=headers, timeout=3)
         if resp.status_code == 200:
             dados = resp.json()
             if not dados.get("erro"):
@@ -127,10 +129,40 @@ def consultar_cep_api(cep_limpo):
     except Exception:
         pass
 
-    # 2. BrasilAPI v1
+    # 2. AwesomeAPI (Excelente para CEPs genéricos de município como 97700000)
+    try:
+        url_awesome = f"https://cep.awesomeapi.com.br/json/{cep_limpo}"
+        resp = requests.get(url_awesome, headers=headers, timeout=3)
+        if resp.status_code == 200:
+            dados = resp.json()
+            cidade = dados.get("city", "").strip()
+            uf = dados.get("state", "").strip()
+            if cidade and uf:
+                cache[cep_limpo] = (cidade, uf, "AwesomeAPI")
+                return cidade, uf, "AwesomeAPI"
+    except Exception:
+        pass
+
+    # 3. ApiCEP (CDN estático rápido para CEPs municipais)
+    try:
+        cep_f = f"{cep_limpo[:5]}-{cep_limpo[5:]}"
+        url_apicep = f"https://cdn.apicep.com/file/apicep/{cep_f}.json"
+        resp = requests.get(url_apicep, headers=headers, timeout=3)
+        if resp.status_code == 200:
+            dados = resp.json()
+            if dados.get("ok"):
+                cidade = dados.get("city", "").strip()
+                uf = dados.get("state", "").strip()
+                if cidade and uf:
+                    cache[cep_limpo] = (cidade, uf, "ApiCEP")
+                    return cidade, uf, "ApiCEP"
+    except Exception:
+        pass
+
+    # 4. BrasilAPI v1
     try:
         url_b1 = f"https://brasilapi.com.br/api/cep/v1/{cep_limpo}"
-        resp = requests.get(url_b1, timeout=5)
+        resp = requests.get(url_b1, headers=headers, timeout=3)
         if resp.status_code == 200:
             dados = resp.json()
             cidade = dados.get("city", "").strip()
@@ -141,10 +173,10 @@ def consultar_cep_api(cep_limpo):
     except Exception:
         pass
 
-    # 3. BrasilAPI v2
+    # 5. BrasilAPI v2
     try:
         url_b2 = f"https://brasilapi.com.br/api/cep/v2/{cep_limpo}"
-        resp = requests.get(url_b2, timeout=5)
+        resp = requests.get(url_b2, headers=headers, timeout=3)
         if resp.status_code == 200:
             dados = resp.json()
             cidade = dados.get("city", "").strip()
