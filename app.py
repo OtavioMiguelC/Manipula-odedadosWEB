@@ -527,8 +527,8 @@ with st.sidebar:
     st.download_button(label="📥 Baixar Modelo Base (Vazio)", data=gerar_modelo_base_vazio(), file_name="Base_de_Origem_Template.xlsx", use_container_width=True)
     st.download_button(label="📥 Baixar Modelo CEP (Vazio)", data=gerar_modelo_cep_vazio(), file_name="Modelo CEP.xlsx", use_container_width=True)
     st.divider()
-    cnpj_global = st.text_input("CNPJ Transportadora Padrão", value="12345678000100")
-    nome_global = st.text_input("Nome Transportadora Padrão", value="TRANSPORTADORA LOG")
+    cnpj_global = st.text_input("CNPJ Transportadora Padrão", value="Preencher aqui")
+    nome_global = st.text_input("Nome Transportadora Padrão", value="Preencher aqui")
     
     st.divider()
     if st.button("Atualizar Cache IBGE", use_container_width=True):
@@ -537,7 +537,7 @@ with st.sidebar:
 
 # Abas do aplicativo
 tab_cep, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📮 Modelo CEP",
+    "📮 Cadastro CEP",
     "🌍 Preencher IBGE", 
     "⏱️ Prazos/Freq", 
     "🗺️ Criar Região", 
@@ -547,9 +547,9 @@ tab_cep, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "👥 Restrições Por Pessoas"
 ])
 
-# --- ABA CEPS: MODELO CEP LINCROS ---
+# --- ABA CEPS: CADASTRO CEP LINCROS ---
 with tab_cep:
-    st.markdown("### 📮 Gerar Modelo CEP (Lincros)")
+    st.markdown("### 📮 Cadastro CEP (Lincros)")
     st.info("Cole os CEPs iniciais e finais nas colunas abaixo (aceita com ou sem hífen `-`). O sistema consulta automaticamente a cidade/UF via API dos Correios (ViaCEP/BrasilAPI), insere no formato `Cidade - UF` na coluna Nome, mantendo o ID de Localização vazio e o status Ativo como VERDADEIRO.")
 
     col_input1, col_input2 = st.columns(2)
@@ -567,6 +567,7 @@ with tab_cep:
     )
 
     st.markdown("#### 📁 Ou faça upload de uma planilha contendo CEPs (opcional)")
+    st.caption("💡 **Como funciona o upload:** Aceita qualquer planilha Excel (`.xlsx` / `.xls`) ou `.csv`. O sistema detecta automaticamente colunas com nomes como `CEP`, `CEP Inicial` ou `CEP Final`. Caso a planilha não possua cabeçalho, ele utilizará a 1ª coluna como CEP Inicial e a 2ª como CEP Final.")
     file_cep_up = st.file_uploader("Upload de arquivo Excel/CSV", type=["xlsx", "xls", "csv"], key="file_cep_up")
 
     col_btn_cep1, col_btn_cep2 = st.columns([2, 1])
@@ -632,9 +633,9 @@ with tab_cep:
 
     if 'out_modelo_cep' in st.session_state:
         st.download_button(
-            label="📥 BAIXAR MODELO CEP PREENCHIDO (.XLSX)",
+            label="📥 BAIXAR PLANILHA CADASTRO CEP PREENCHIDA (.XLSX)",
             data=st.session_state['out_modelo_cep'],
-            file_name="Modelo CEP Preenchido.xlsx",
+            file_name="Cadastro CEP Preenchido.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
