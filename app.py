@@ -20,6 +20,7 @@ CAMINHO_CACHE_IBGE = 'municipios_ibge_cache.json'
 ARQUIVO_MODELO_REGIAO = 'Modelo Região.xlsx'
 ARQUIVO_MODELO_ROTA = 'Modelo Rota.xlsx'
 ARQUIVO_MODELO_TDE = "Modelo TDE.xlsx"
+ARQUIVO_MODELO_CEP = "Modelo CEP.xlsx"
 
 NOME_ABA = 'Base'
 COL_CIDADE = 'Destino'
@@ -74,6 +75,149 @@ def gerar_modelo_base_vazio():
     wb.save(output)
     output.seek(0)
     return output
+
+def gerar_modelo_cep_vazio():
+    if os.path.exists(ARQUIVO_MODELO_CEP):
+        with open(ARQUIVO_MODELO_CEP, "rb") as f:
+            return f.read()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "FaixaCEP"
+    ws.append([None, None, 'www.lincros.com.br', None, None])
+    ws.append([None, None, 'atendimento@lincros.com', None, None])
+    ws.append(['Preencha nesta planilha todas as unidades que a transportadora possui.', None, None, None, None])
+    ws.append(['ID Localização', 'CEP Inicial', 'CEP Final', 'Nome', 'Ativo'])
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+def limpar_cep(cep_raw):
+    if pd.isna(cep_raw):
+        return ""
+    cep_str = re.sub(r'\D', '', str(cep_raw)).strip()
+    if not cep_str:
+        return ""
+    return cep_str.zfill(8)
+
+def consultar_cep_api(cep_limpo):
+    """Consulta cidade e UF por CEP utilizando ViaCEP com fallbacks para BrasilAPI."""
+    if not cep_limpo or len(cep_limpo) != 8:
+        return None, None, f"CEP Inválido ({cep_limpo})"
+    
+    if "cache_cep_api" not in st.session_state:
+        st.session_state["cache_cep_api"] = {}
+    
+    cache = st.session_state["cache_cep_api"]
+    if cep_limpo in cache:
+        return cache[cep_limpo]
+
+    # 1. ViaCEP
+    try:
+        url_viacep = f"https://viacep.com.br/ws/{cep_limpo}/json/"
+        resp = requests.get(url_viacep, timeout=5)
+        if resp.status_code == 200:
+            dados = resp.json()
+            if not dados.get("erro"):
+                cidade = dados.get("localidade", "").strip()
+                uf = dados.get("uf", "").strip()
+                if cidade and uf:
+                    cache[cep_limpo] = (cidade, uf, "ViaCEP")
+                    return cidade, uf, "ViaCEP"
+    except Exception:
+        pass
+
+    # 2. BrasilAPI v1
+    try:
+        url_b1 = f"https://brasilapi.com.br/api/cep/v1/{cep_limpo}"
+        resp = requests.get(url_b1, timeout=5)
+        if resp.status_code == 200:
+            dados = resp.json()
+            cidade = dados.get("city", "").strip()
+            uf = dados.get("state", "").strip()
+            if cidade and uf:
+                cache[cep_limpo] = (cidade, uf, "BrasilAPI")
+                return cidade, uf, "BrasilAPI"
+    except Exception:
+        pass
+
+    # 3. BrasilAPI v2
+    try:
+        url_b2 = f"https://brasilapi.com.br/api/cep/v2/{cep_limpo}"
+        resp = requests.get(url_b2, timeout=5)
+        if resp.status_code == 200:
+            dados = resp.json()
+            cidade = dados.get("city", "").strip()
+            uf = dados.get("state", "").strip()
+            if cidade and uf:
+                cache[cep_limpo] = (cidade, uf, "BrasilAPI")
+                return cidade, uf, "BrasilAPI"
+    except Exception:
+        pass
+
+    cache[cep_limpo] = (None, None, "Não Encontrado")
+    return None, None, "Não Encontrado"
+
+def processar_modelo_cep(lista_ceps, file_modelo=ARQUIVO_MODELO_CEP, progress_bar=None):
+    if os.path.exists(file_modelo):
+        wb = load_workbook(file_modelo)
+    else:
+        wb = Workbook()
+        ws_temp = wb.active
+        ws_temp.title = "FaixaCEP"
+        ws_temp.append([None, None, 'www.lincros.com.br', None, None])
+        ws_temp.append([None, None, 'atendimento@lincros.com', None, None])
+        ws_temp.append(['Preencha nesta planilha...', None, None, None, None])
+        ws_temp.append(['ID Localização', 'CEP Inicial', 'CEP Final', 'Nome', 'Ativo'])
+
+    ws = wb["FaixaCEP"] if "FaixaCEP" in wb.sheetnames else wb.active
+
+    if ws.max_row >= 5:
+        ws.delete_rows(5, ws.max_row - 4)
+
+    linha_atual = 5
+    resumo_processamento = []
+    total = len(lista_ceps)
+
+    for idx, (cep_ini_raw, cep_fim_raw) in enumerate(lista_ceps, start=1):
+        if progress_bar:
+            progress_bar.progress(idx / total, text=f"Consultando CEP {idx}/{total}...")
+        
+        cep_ini = limpar_cep(cep_ini_raw)
+        cep_fim = limpar_cep(cep_fim_raw) if cep_fim_raw and str(cep_fim_raw).strip() else cep_ini
+
+        if not cep_ini:
+            continue
+
+        cidade, uf, status = consultar_cep_api(cep_ini)
+
+        if cidade and uf:
+            nome_lincros = f"{cidade} - {uf}"
+        else:
+            nome_lincros = f"NÃO ENCONTRADO ({cep_ini})"
+
+        ws.cell(row=linha_atual, column=1, value="")
+        ws.cell(row=linha_atual, column=2, value=cep_ini)
+        ws.cell(row=linha_atual, column=3, value=cep_fim)
+        ws.cell(row=linha_atual, column=4, value=nome_lincros)
+        ws.cell(row=linha_atual, column=5, value="VERDADEIRO")
+
+        resumo_processamento.append({
+            "Linha": idx,
+            "CEP Inicial": cep_ini,
+            "CEP Final": cep_fim,
+            "Cidade": cidade or "-",
+            "UF": uf or "-",
+            "Nome Lincros": nome_lincros,
+            "Status": status
+        })
+
+        linha_atual += 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output, pd.DataFrame(resumo_processamento)
 
 def carregar_lista_cidades_ibge():
     """Lê o cache do IBGE e retorna uma lista formatada para o selectbox."""
@@ -612,7 +756,10 @@ def atualizar_dicionario_com_extracao(dados_json):
 
 def extrair_dados_tabela_ia(arquivos_input, api_key=None, modelo_nome="gemini-2.5-flash"):
     """Aceita um único arquivo ou uma lista de múltiplos arquivos (ex: Tabela de Preços + Relação Complementar de Cidades)."""
-    secrets_key = st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets else None
+    try:
+        secrets_key = st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets else None
+    except Exception:
+        secrets_key = None
     key = api_key or os.environ.get("GEMINI_API_KEY") or secrets_key
     
     lista_arquivos = arquivos_input if isinstance(arquivos_input, list) else [arquivos_input]
@@ -857,12 +1004,15 @@ st.title("📦 Ferramentas Logísticas & IA Consolida")
 with st.sidebar:
     st.header("⚙️ Configurações Padrão")
     st.download_button(label="📥 Baixar Modelo Base (Vazio)", data=gerar_modelo_base_vazio(), file_name="Base_de_Origem_Template.xlsx", use_container_width=True)
+    st.download_button(label="📥 Baixar Modelo CEP (Vazio)", data=gerar_modelo_cep_vazio(), file_name="Modelo CEP.xlsx", use_container_width=True)
     st.divider()
     cnpj_global = st.text_input("CNPJ Transportadora Padrão", value="12345678000100")
     nome_global = st.text_input("Nome Transportadora Padrão", value="TRANSPORTADORA LOG")
     
-    st.divider()
-    has_secrets_key = hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]
+    try:
+        has_secrets_key = hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        has_secrets_key = False
     if has_secrets_key:
         st.success("🟢 Chave Gemini API Ativa (Secrets)")
     elif os.environ.get("GEMINI_API_KEY"):
@@ -876,9 +1026,10 @@ with st.sidebar:
         st.success("Cache IBGE atualizado com sucesso!")
 
 # Abas do aplicativo
-tab_ia, tab_dic, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab_ia, tab_dic, tab_cep, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🤖 Processamento Inteligente (IA)",
     "🧠 Dicionário de Aprendizado",
+    "📮 Modelo CEP",
     "🌍 Preencher IBGE", 
     "⏱️ Prazos/Freq", 
     "🗺️ Criar Região", 
@@ -908,6 +1059,98 @@ with tab_dic:
         carregar_memoria_dicionario()
         st.success("Dicionário resetado com sucesso!")
         st.rerun()
+
+# --- ABA CEPS: MODELO CEP LINCROS ---
+with tab_cep:
+    st.markdown("### 📮 Gerar Modelo CEP (Lincros)")
+    st.info("Cole os CEPs iniciais e finais nas colunas abaixo (aceita com ou sem hífen `-`). O sistema consulta automaticamente a cidade/UF via API dos Correios (ViaCEP/BrasilAPI), insere no formato `Cidade - UF` na coluna Nome, mantendo o ID de Localização vazio e o status Ativo como VERDADEIRO.")
+
+    col_input1, col_input2 = st.columns(2)
+    txt_cep_ini = col_input1.text_area(
+        "CEP Inicial (um por linha)",
+        height=250,
+        placeholder="Ex:\n80000-000\n97700-000\n01001-000",
+        key="txt_cep_ini"
+    )
+    txt_cep_fim = col_input2.text_area(
+        "CEP Final (um por linha - opcional)",
+        height=250,
+        placeholder="Ex:\n80000-000\n97700-000\n01001-000\n(Se deixar em branco, usará o CEP Inicial)",
+        key="txt_cep_fim"
+    )
+
+    st.markdown("#### 📁 Ou faça upload de uma planilha contendo CEPs (opcional)")
+    file_cep_up = st.file_uploader("Upload de arquivo Excel/CSV", type=["xlsx", "xls", "csv"], key="file_cep_up")
+
+    col_btn_cep1, col_btn_cep2 = st.columns([2, 1])
+    if col_btn_cep1.button("🚀 PROCESSAR CEPS & CONSULTAR CORREIOS", use_container_width=True):
+        lista_pares = []
+
+        # 1. Obter dados das text areas
+        linhas_ini = [l.strip() for l in txt_cep_ini.split('\n') if l.strip()]
+        linhas_fim = [l.strip() for l in txt_cep_fim.split('\n') if l.strip()]
+
+        for i, c_ini in enumerate(linhas_ini):
+            c_fim = linhas_fim[i] if i < len(linhas_fim) else c_ini
+            lista_pares.append((c_ini, c_fim))
+
+        # 2. Obter dados do upload se enviado
+        if file_cep_up is not None:
+            try:
+                ext = file_cep_up.name.split('.')[-1].lower()
+                if ext in ['xlsx', 'xls']:
+                    df_up = pd.read_excel(file_cep_up)
+                else:
+                    df_up = pd.read_csv(file_cep_up)
+
+                cols = [str(c).upper() for c in df_up.columns]
+                col_ini_idx = next((i for i, c in enumerate(cols) if 'INI' in c or 'CEP' in c), 0)
+                col_fim_idx = next((i for i, c in enumerate(cols) if 'FIM' in c or 'FINAL' in c), None)
+
+                for _, row in df_up.iterrows():
+                    val_ini = str(row.iloc[col_ini_idx]) if len(row) > col_ini_idx else ""
+                    val_fim = str(row.iloc[col_fim_idx]) if col_fim_idx is not None and len(row) > col_fim_idx else val_ini
+                    if val_ini and val_ini.lower() != "nan":
+                        lista_pares.append((val_ini, val_fim))
+            except Exception as e_up:
+                st.error(f"Erro ao ler arquivo de CEPs: {e_up}")
+
+        if not lista_pares:
+            st.warning("⚠️ Cole os CEPs nas caixas de texto acima ou envie um arquivo para processar.")
+        else:
+            p_bar = st.progress(0, text="Iniciando consulta de CEPs...")
+            try:
+                out_cep_bytes, df_resumo = processar_modelo_cep(lista_pares, file_modelo=ARQUIVO_MODELO_CEP, progress_bar=p_bar)
+                st.session_state['out_modelo_cep'] = out_cep_bytes
+                st.session_state['df_resumo_cep'] = df_resumo
+                p_bar.progress(1.0, text="Concluído!")
+
+                sucessos = len(df_resumo[df_resumo['Status'] != 'Não Encontrado'])
+                st.success(f"✅ Processamento concluído! {sucessos}/{len(df_resumo)} CEPs localizados com sucesso.")
+            except Exception as e_proc:
+                st.error(f"Erro durante o processamento: {e_proc}")
+
+    if col_btn_cep2.button("📥 Baixar Modelo CEP (Vazio)", use_container_width=True):
+        st.download_button(
+            label="📥 Confirmar Download Modelo Vazio",
+            data=gerar_modelo_cep_vazio(),
+            file_name="Modelo CEP.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    if 'df_resumo_cep' in st.session_state and not st.session_state['df_resumo_cep'].empty:
+        st.markdown("#### 📋 Pré-visualização dos Dados")
+        st.dataframe(st.session_state['df_resumo_cep'], use_container_width=True)
+
+    if 'out_modelo_cep' in st.session_state:
+        st.download_button(
+            label="📥 BAIXAR MODELO CEP PREENCHIDO (.XLSX)",
+            data=st.session_state['out_modelo_cep'],
+            file_name="Modelo CEP Preenchido.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 # --- ABA INTELIGENTE COM IA ---
 with tab_ia:
