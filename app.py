@@ -670,7 +670,7 @@ with st.sidebar:
         st.success("Cache IBGE atualizado com sucesso!")
 
 # Abas do aplicativo
-tab_cep, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab_cep, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab_manual = st.tabs([
     "📮 Cadastro CEP",
     "🌍 Preencher IBGE", 
     "⏱️ Prazos/Freq", 
@@ -678,12 +678,31 @@ tab_cep, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📍 Gerar Rotas", 
     "🔄 Conv. S/N", 
     "📅 Conv. STQQS", 
-    "👥 Restrições Por Pessoas"
+    "👥 Restrições Por Pessoas",
+    "📖 Manual de Uso"
 ])
 
 # --- ABA CEPS: CADASTRO CEP LINCROS ---
 with tab_cep:
     st.markdown("### 📮 Cadastro CEP (Lincros)")
+    
+    with st.expander("❓ Como funciona a ferramenta Cadastro CEP? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### 📮 Instruções - Cadastro CEP
+        Esta ferramenta padroniza faixas de CEP no modelo oficial da **Lincros**, consultando automaticamente o nome da **Cidade - UF** via APIs dos Correios em tempo real.
+
+        ##### 📋 Como estruturar os dados:
+        - **Texto**: Cole a lista de CEPs na caixa *CEP Inicial* (um por linha). Se a caixa *CEP Final* ficar vazia, o sistema usará o mesmo CEP inicial.
+        - **Planilha**: Ou suba um arquivo Excel/CSV. O sistema detecta colunas como `CEP`, `CEP Inicial` ou `CEP Final` automaticamente.
+        - Aceita CEPs com hífen (`80000-000`) ou sem hífen (`80000000`).
+
+        ##### 🎯 Formato do Resultado Exportado (`Modelo CEP Preenchido.xlsx`):
+        | ID Localização | CEP Inicial | CEP Final | Nome | Ativo |
+        | :--- | :--- | :--- | :--- | :--- |
+        | *(Vazio)* | `80010000` | `80010000` | `Curitiba - PR` | `VERDADEIRO` |
+        | *(Vazio)* | `97700000` | `97700000` | `Santiago - RS` | `VERDADEIRO` |
+        """)
+
     st.info("Cole os CEPs iniciais e finais nas colunas abaixo (aceita com ou sem hífen `-`). O sistema consulta automaticamente a cidade/UF via API dos Correios (ViaCEP/BrasilAPI), insere no formato `Cidade - UF` na coluna Nome, mantendo o ID de Localização vazio e o status Ativo como VERDADEIRO.")
 
     col_input1, col_input2 = st.columns(2)
@@ -779,6 +798,24 @@ with tab_cep:
 # --- ABA 1: IBGE ---
 with tab1:
     st.markdown("### Preencher Códigos IBGE")
+    
+    with st.expander("❓ Como funciona o Preenchimento de IBGE? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### 🌍 Instruções - Preenchimento de Códigos IBGE
+        Esta ferramenta analisa sua planilha base e preenche automaticamente o Código IBGE de 7 dígitos de cada cidade.
+
+        ##### 📋 Estrutura da Planilha de Entrada:
+        A planilha enviada deve conter as colunas:
+        - **`Destino`**: Nome da cidade (ex: *Curitiba*, *São Paulo*, *Porto Alegre*).
+        - **`UF Destino`**: Sigla do estado com 2 letras (ex: *PR*, *SP*, *RS*).
+
+        ##### 🎯 Exemplo de Entrada vs Saída:
+        | Destino | UF Destino | Codigo IBGE (Gerado) |
+        | :--- | :--- | :--- |
+        | Curitiba | PR | **4106902** |
+        | São Paulo | SP | **3550308** |
+        """)
+
     file_ibge = st.file_uploader("Planilha de Base", type=["xlsx"], key="ibge_file")
     if file_ibge and st.button("Processar IBGE"):
         out_bytes, exatos, aprox, nao_enc = processar_ibge(file_ibge)
@@ -790,6 +827,17 @@ with tab1:
 # --- ABA 2: Prazos e Frequência ---
 with tab2:
     st.markdown("### Preencher Prazos e Frequência")
+    
+    with st.expander("❓ Como funciona Prazos e Frequência? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### ⏱️ Instruções - Cruzamento de Prazos e Frequência
+        Cruza os prazos de entrega e dias de atendimento da sua **Planilha BASE** para a **Planilha DESTINO (Modelo Lincros)**.
+
+        ##### 📋 Como estruturar:
+        1. **Planilha DESTINO**: Arquivo modelo da Lincros onde as informações serão gravadas.
+        2. **Planilha BASE**: Planilha preenchida que contém a coluna **`Codigo IBGE`**, o **`Prazo`** e os dias da semana (`SEG`, `TER`, `QUA`, etc.).
+        """)
+
     c1, c2 = st.columns(2); f_dest = c1.file_uploader("Planilha DESTINO", type=["xlsx"]); f_base = c2.file_uploader("BASE", type=["xlsx"])
     if f_dest and f_base and st.button("Processar Prazos"):
         out, at = processar_prazos(f_dest, f_base)
@@ -800,6 +848,22 @@ with tab2:
 # --- ABA 3: Criar Regiões ---
 with tab3:
     st.markdown("### Criar Regiões")
+    
+    with st.expander("❓ Como funciona a Criação de Regiões? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### 🗺️ Instruções - Criação de Regiões Lincros
+        Transforma sua planilha base em um arquivo **Modelo Região (.xlsx)** pronto para ser importado na Lincros.
+
+        ##### 📋 Estrutura da Planilha Base:
+        Sua planilha deve conter a coluna **`Nome da Região`** e uma das opções abaixo:
+        - **Por Faixa de CEP**: Colunas **`CEP Inicial`** e **`CEP Final`**.
+        - **Por Cidade**: Coluna **`Codigo IBGE`**.
+
+        ##### 🎯 Estrutura Gerada no Modelo Região Lincros:
+        - Aba **`regioes`**: Lista as regiões únicas com o CNPJ da transportadora.
+        - Aba **`localizacoes_atendidas`**: Associa cada região ao CEP Inicial/Final ou Código IBGE.
+        """)
+
     f_reg = st.file_uploader("Base de Prazos", type=["xlsx"], key="reg_up")
     if f_reg and st.button("Criar Regiões"):
         if not cnpj_global: st.warning("Preencha o CNPJ lateral")
@@ -814,6 +878,17 @@ with tab3:
 with tab4:
     st.markdown("### Gerar Rotas")
     
+    with st.expander("❓ Como funciona a Geração de Rotas? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### 📍 Instruções - Matriz de Rotas Lincros
+        Gera a estrutura de rotas vinculando a origem (Cidade IBGE ou Região) às regiões de destino geradas no passo anterior.
+
+        ##### 📋 Como estruturar:
+        1. Suba o arquivo **Regiões (.xlsx)** gerado na aba *Criar Região*.
+        2. Escolha a nomenclatura da Rota (`1: ROTA - PRAZO` ou `2: (TRANS) (ORIGEM)`).
+        3. Selecione a Origem (por Cidade IBGE ou nome de Região).
+        """)
+
     file_modelo_regioes = st.file_uploader("1. Modelo de Região (Já preenchido no passo anterior)", type=["xlsx"], key="rota_mod_reg")
     
     st.divider()
@@ -877,6 +952,14 @@ with tab4:
 
 # --- ABA 5: Converter S/N ---
 with tab5:
+    st.markdown("### Converter S/N (Sim/Não)")
+    
+    with st.expander("❓ Como funciona a Conversão S/N? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### 🔄 Instruções - Conversão Sim/Não
+        Varre as colunas dos dias da semana e converte caracteres simples (`S`, `N`, `SIM`, `NÃO`, `1`, `0`, `X`) nos valores aceitos pela Lincros (**`VERDADEIRO`** ou **`FALSO`**).
+        """)
+
     f_sn = st.file_uploader("Planilha S/N", type=["xlsx"])
     if f_sn and st.button("Converter S/N"):
         st.session_state['out_sn'] = converter_freq(f_sn); st.success("Convertido!")
@@ -885,6 +968,14 @@ with tab5:
 
 # --- ABA 6: Converter STQQS ---
 with tab6:
+    st.markdown("### Converter STQQS (Texto Frequência)")
+    
+    with st.expander("❓ Como funciona a Conversão STQQS? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### 📅 Instruções - Conversão STQQS
+        Desmembra textos de frequência semanal codificados (ex: `STQQS..`, `S.Q.S.`) em colunas individuais com booleanos `VERDADEIRO` / `FALSO`.
+        """)
+
     f_st = st.file_uploader("Planilha STQQS", type=["xlsx"])
     if f_st and st.button("Converter STQQS"):
         st.session_state['out_stqqs'] = converter_freq_txt(f_st); st.success("Convertido!")
@@ -894,6 +985,19 @@ with tab6:
 # --- ABA 7: RESTRIÇÕES POR PESSOAS ---
 with tab7:
     st.markdown("### 👥 Restrições Por Pessoas")
+    
+    with st.expander("❓ Como funciona a Restrição por Pessoas? (Clique para expandir)", expanded=False):
+        st.markdown("""
+        #### 👥 Instruções - Gerador de Restrições em Lote
+        Processa listas de clientes e gera planilhas compactadas no modelo oficial Lincros de Restrição por Pessoas.
+
+        ##### 📋 Formato de Entrada no Texto:
+        ```text
+        12345678000100 EMPRESA EXEMPLO LTDA 500,00
+        98765432000199 CLIENTE TESTE SA 1200,00
+        ```
+        """)
+
     st.info("Gera arquivos de cadastro de pessoas separando por valor e limite de linhas.")
 
     col_btn1, col_btn2, col_btn3 = st.columns(3)
@@ -938,3 +1042,63 @@ with tab7:
             mime="application/zip",
             use_container_width=True
         )
+
+# --- ABA 8: MANUAL DE USO COMPLETO ---
+with tab_manual:
+    st.markdown("## 📖 Manual de Uso e Guia Prático do Analista")
+    st.info("Este manual detalha o passo a passo de como preparar planilhas, utilizar cada ferramenta e padronizar arquivos para o sistema **Lincros**.")
+
+    st.markdown("""
+    ---
+    ### 📂 1. Fluxo Geral de Trabalho (Passo a Passo)
+
+    Para cadastrar uma nova operação de transporte na Lincros, siga esta ordem recomendada:
+
+    1. **Baixar o Modelo Base**: Na barra lateral, clique em **`📥 Baixar Modelo Base (Vazio)`**.
+    2. **Identificar Locais (CEP ou IBGE)**:
+       - Se você possui nomes de cidades: Use a aba **`🌍 Preencher IBGE`**.
+       - Se você possui faixas de CEP: Use a aba **`📮 Cadastro CEP`**.
+    3. **Montar Prazos e Frequências**: Preencha o prazo e os dias da semana.
+    4. **Criar Regiões**: Suba a base na aba **`🗺️ Criar Região`** para gerar o arquivo oficial Lincros (`Regioes.xlsx`).
+    5. **Gerar Rotas**: Na aba **`📍 Gerar Rotas`**, suba a planilha de regiões criada no passo anterior e defina a origem.
+
+    ---
+
+    ### 🛠️ 2. Guia Detalhado de Cada Ferramenta
+
+    #### 📮 Aba 1: Cadastro CEP
+    - **Finalidade**: Converter listas de CEPs em planilhas padronizadas da Lincros com o nome no formato `Cidade - UF`.
+    - **Recursos**:
+      - Aceita colagem de texto ou upload de arquivo Excel/CSV.
+      - **Multithreading ultra-rápido**: Consulta centenas de CEPs em poucos segundos.
+      - **Multi-API Correios**: Tenta automaticamente ViaCEP, AwesomeAPI, ApiCEP e BrasilAPI para resolver 100% dos CEPs (inclusive CEPs genéricos de cidade).
+
+    #### 🌍 Aba 2: Preencher IBGE
+    - **Finalidade**: Inserir os códigos IBGE oficiais de 7 dígitos na planilha base.
+    - **Requisito**: As colunas na planilha enviada devem se chamar **`Destino`** (nome da cidade) e **`UF Destino`** (sigla do estado).
+
+    #### ⏱️ Aba 3: Prazos e Frequência
+    - **Finalidade**: Transferir prazos e dias de frequência da planilha de trabalho para o modelo de destino da Lincros.
+    - **Requisito**: O arquivo base deve possuir a coluna **`Codigo IBGE`**.
+
+    #### 🗺️ Aba 4: Criar Região
+    - **Finalidade**: Gerar o arquivo oficial da Lincros contendo a aba `regioes` e `localizacoes_atendidas`.
+    - **Suporte Duplo**: Aceita tanto **`CEP Inicial` / `CEP Final`** quanto **`Codigo IBGE`**.
+
+    #### 📍 Aba 5: Gerar Rotas
+    - **Finalidade**: Criar a matriz de rotas ligando a origem (Cidade IBGE ou Nome de Região) com as regiões atendidas.
+
+    #### 🔄 Aba 6 & 7: Conversores S/N e STQQS
+    - **S/N**: Substitui `S`/`N`/`1`/`0` por `VERDADEIRO`/`FALSO`.
+    - **STQQS**: Lê textos como `STQQS..` e preenche as colunas de cada dia da semana.
+
+    #### 👥 Aba 8: Restrições Por Pessoas
+    - **Finalidade**: Converter cadastros de clientes restritos em pacotes ZIP contendo arquivos Excel formatados no padrão de importação da Lincros.
+
+    ---
+
+    ### 💡 3. Dicas de Ouro para Analistas
+    - **CNPJ e Nome Padrão**: Sempre configure o CNPJ e o Nome da Transportadora na barra lateral antes de processar Regiões ou Rotas.
+    - **Formatos de Arquivo**: Dê preferência a arquivos **`.xlsx`** limpos e sem células mescladas.
+    - **Desduplicação**: O sistema desduplica CEPs automaticamente para garantir o máximo desempenho.
+    """)
