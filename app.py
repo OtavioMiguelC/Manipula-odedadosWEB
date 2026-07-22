@@ -10,6 +10,7 @@ import io
 import zipfile
 import math
 import re
+import concurrent.futures
 
 # =============================================================================
 # CONFIGURAÇÕES GERAIS E CONSTANTES
@@ -206,20 +207,38 @@ def processar_modelo_cep(lista_ceps, file_modelo=ARQUIVO_MODELO_CEP, progress_ba
     if ws.max_row >= 5:
         ws.delete_rows(5, ws.max_row - 4)
 
-    linha_atual = 5
-    resumo_processamento = []
-    total = len(lista_ceps)
+    # 1. Limpar e estruturar a lista de CEPs
+    ceps_processados = []
+    ceps_unicos = set()
 
-    for idx, (cep_ini_raw, cep_fim_raw) in enumerate(lista_ceps, start=1):
-        if progress_bar:
-            progress_bar.progress(idx / total, text=f"Consultando CEP {idx}/{total}...")
-        
+    for cep_ini_raw, cep_fim_raw in lista_ceps:
         cep_ini = limpar_cep(cep_ini_raw)
         cep_fim = limpar_cep(cep_fim_raw) if cep_fim_raw and str(cep_fim_raw).strip() else cep_ini
+        if cep_ini:
+            ceps_processados.append((cep_ini, cep_fim))
+            ceps_unicos.add(cep_ini)
 
-        if not cep_ini:
-            continue
+    total_unicos = len(ceps_unicos)
+    if total_unicos == 0:
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output, pd.DataFrame()
 
+    # 2. Consultar CEPs únicos em paralelo (Multithreading ultra rápido)
+    concluidos = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=25) as executor:
+        futures = {executor.submit(consultar_cep_api, c): c for c in ceps_unicos}
+        for future in concurrent.futures.as_completed(futures):
+            concluidos += 1
+            if progress_bar:
+                progress_bar.progress(concluidos / total_unicos, text=f"Consultando CEPs únicos: {concluidos}/{total_unicos}...")
+
+    # 3. Montar a planilha final e o resumo
+    linha_atual = 5
+    resumo_processamento = []
+
+    for idx, (cep_ini, cep_fim) in enumerate(ceps_processados, start=1):
         cidade, uf, status = consultar_cep_api(cep_ini)
 
         if cidade and uf:
