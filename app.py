@@ -1046,27 +1046,6 @@ with tab7:
 # --- ABA 8: MANUAL DE USO COMPLETO ---
 with tab_manual:
     st.markdown("## 📖 Manual de Uso e Guia Prático do Analista")
-    
-    col_dl1, col_dl2 = st.columns(2)
-    if os.path.exists("Manual_do_Analista_Lincros.pdf"):
-        with open("Manual_do_Analista_Lincros.pdf", "rb") as f_pdf:
-            col_dl1.download_button(
-                label="📥 BAIXAR MANUAL EM PDF (.PDF)",
-                data=f_pdf.read(),
-                file_name="Manual_do_Analista_Lincros.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-    if os.path.exists("Manual_do_Analista_Lincros.docx"):
-        with open("Manual_do_Analista_Lincros.docx", "rb") as f_docx:
-            col_dl2.download_button(
-                label="📥 BAIXAR MANUAL EM WORD (.DOCX)",
-                data=f_docx.read(),
-                file_name="Manual_do_Analista_Lincros.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True
-            )
-
     st.info("Este manual detalha o passo a passo de como preparar planilhas, utilizar cada ferramenta e padronizar arquivos para o sistema **Lincros**.")
 
     st.markdown("""
