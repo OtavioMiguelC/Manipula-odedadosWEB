@@ -101,7 +101,7 @@ def limpar_cep(cep_raw):
     return cep_str.zfill(8)
 
 def consultar_cep_api(cep_limpo):
-    """Consulta cidade e UF por CEP utilizando ViaCEP, AwesomeAPI, ApiCEP e BrasilAPI."""
+    """Consulta cidade e UF por CEP utilizando ViaCEP, AwesomeAPI, ApiCEP e BrasilAPI com fallback inteligente."""
     if not cep_limpo or len(cep_limpo) != 8:
         return None, None, f"CEP Inválido ({cep_limpo})"
     
@@ -114,78 +114,77 @@ def consultar_cep_api(cep_limpo):
 
     headers = {'User-Agent': 'Mozilla/5.0'}
 
-    # 1. ViaCEP
-    try:
-        url_viacep = f"https://viacep.com.br/ws/{cep_limpo}/json/"
-        resp = requests.get(url_viacep, headers=headers, timeout=3)
-        if resp.status_code == 200:
-            dados = resp.json()
-            if not dados.get("erro"):
-                cidade = dados.get("localidade", "").strip()
-                uf = dados.get("uf", "").strip()
-                if cidade and uf:
-                    cache[cep_limpo] = (cidade, uf, "ViaCEP")
-                    return cidade, uf, "ViaCEP"
-    except Exception:
-        pass
+    def _tentar_apis(target_cep):
+        # 1. ViaCEP
+        try:
+            url_viacep = f"https://viacep.com.br/ws/{target_cep}/json/"
+            resp = requests.get(url_viacep, headers=headers, timeout=3)
+            if resp.status_code == 200:
+                dados = resp.json()
+                if not dados.get("erro"):
+                    cidade = dados.get("localidade", "").strip()
+                    uf = dados.get("uf", "").strip()
+                    if cidade and uf:
+                        return cidade, uf, "ViaCEP"
+        except Exception:
+            pass
 
-    # 2. AwesomeAPI (Excelente para CEPs genéricos de município como 97700000)
-    try:
-        url_awesome = f"https://cep.awesomeapi.com.br/json/{cep_limpo}"
-        resp = requests.get(url_awesome, headers=headers, timeout=3)
-        if resp.status_code == 200:
-            dados = resp.json()
-            cidade = dados.get("city", "").strip()
-            uf = dados.get("state", "").strip()
-            if cidade and uf:
-                cache[cep_limpo] = (cidade, uf, "AwesomeAPI")
-                return cidade, uf, "AwesomeAPI"
-    except Exception:
-        pass
-
-    # 3. ApiCEP (CDN estático rápido para CEPs municipais)
-    try:
-        cep_f = f"{cep_limpo[:5]}-{cep_limpo[5:]}"
-        url_apicep = f"https://cdn.apicep.com/file/apicep/{cep_f}.json"
-        resp = requests.get(url_apicep, headers=headers, timeout=3)
-        if resp.status_code == 200:
-            dados = resp.json()
-            if dados.get("ok"):
+        # 2. AwesomeAPI (Excelente para CEPs genéricos de município como 97700000)
+        try:
+            url_awesome = f"https://cep.awesomeapi.com.br/json/{target_cep}"
+            resp = requests.get(url_awesome, headers=headers, timeout=3)
+            if resp.status_code == 200:
+                dados = resp.json()
                 cidade = dados.get("city", "").strip()
                 uf = dados.get("state", "").strip()
                 if cidade and uf:
-                    cache[cep_limpo] = (cidade, uf, "ApiCEP")
-                    return cidade, uf, "ApiCEP"
-    except Exception:
-        pass
+                    return cidade, uf, "AwesomeAPI"
+        except Exception:
+            pass
 
-    # 4. BrasilAPI v1
-    try:
-        url_b1 = f"https://brasilapi.com.br/api/cep/v1/{cep_limpo}"
-        resp = requests.get(url_b1, headers=headers, timeout=3)
-        if resp.status_code == 200:
-            dados = resp.json()
-            cidade = dados.get("city", "").strip()
-            uf = dados.get("state", "").strip()
-            if cidade and uf:
-                cache[cep_limpo] = (cidade, uf, "BrasilAPI")
-                return cidade, uf, "BrasilAPI"
-    except Exception:
-        pass
+        # 3. ApiCEP (CDN estático rápido para CEPs municipais)
+        try:
+            cep_f = f"{target_cep[:5]}-{target_cep[5:]}"
+            url_apicep = f"https://cdn.apicep.com/file/apicep/{cep_f}.json"
+            resp = requests.get(url_apicep, headers=headers, timeout=3)
+            if resp.status_code == 200:
+                dados = resp.json()
+                if dados.get("ok"):
+                    cidade = dados.get("city", "").strip()
+                    uf = dados.get("state", "").strip()
+                    if cidade and uf:
+                        return cidade, uf, "ApiCEP"
+        except Exception:
+            pass
 
-    # 5. BrasilAPI v2
-    try:
-        url_b2 = f"https://brasilapi.com.br/api/cep/v2/{cep_limpo}"
-        resp = requests.get(url_b2, headers=headers, timeout=3)
-        if resp.status_code == 200:
-            dados = resp.json()
-            cidade = dados.get("city", "").strip()
-            uf = dados.get("state", "").strip()
-            if cidade and uf:
-                cache[cep_limpo] = (cidade, uf, "BrasilAPI")
-                return cidade, uf, "BrasilAPI"
-    except Exception:
-        pass
+        # 4. BrasilAPI v1
+        try:
+            url_b1 = f"https://brasilapi.com.br/api/cep/v1/{target_cep}"
+            resp = requests.get(url_b1, headers=headers, timeout=3)
+            if resp.status_code == 200:
+                dados = resp.json()
+                cidade = dados.get("city", "").strip()
+                uf = dados.get("state", "").strip()
+                if cidade and uf:
+                    return cidade, uf, "BrasilAPI"
+        except Exception:
+            pass
+
+        return None, None, None
+
+    # Tentativa 1: CEP exato informado
+    cidade, uf, prov = _tentar_apis(cep_limpo)
+    if cidade and uf:
+        cache[cep_limpo] = (cidade, uf, prov)
+        return cidade, uf, prov
+
+    # Tentativa 2: Se o CEP termina em '000', tentar '001' (para cidades com CEPs por logradouro)
+    if cep_limpo.endswith("000"):
+        cep_alt = cep_limpo[:5] + "001"
+        cidade, uf, prov = _tentar_apis(cep_alt)
+        if cidade and uf:
+            cache[cep_limpo] = (cidade, uf, prov)
+            return cidade, uf, prov
 
     cache[cep_limpo] = (None, None, "Não Encontrado")
     return None, None, "Não Encontrado"
