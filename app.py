@@ -683,13 +683,13 @@ with st.sidebar:
     st.download_button(
         label="📥 Baixar Modelo Base (Vazio)", 
         data=gerar_modelo_base_vazio(), 
-        file_name=formatar_nome_arquivo("Base_de_Origem_Template", nome_global, "xlsx"), 
+        file_name="Base_de_Origem_Template.xlsx", 
         use_container_width=True
     )
     st.download_button(
         label="📥 Baixar Modelo CEP (Vazio)", 
         data=gerar_modelo_cep_vazio(), 
-        file_name=formatar_nome_arquivo("Modelo_CEP_Template", nome_global, "xlsx"), 
+        file_name="Modelo CEP.xlsx", 
         use_container_width=True
     )
     
@@ -807,7 +807,7 @@ with tab_cep:
         st.download_button(
             label="📥 Confirmar Download Modelo Vazio",
             data=gerar_modelo_cep_vazio(),
-            file_name=formatar_nome_arquivo("Modelo_CEP_Vazio", nome_global, "xlsx"),
+            file_name="Modelo CEP.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
