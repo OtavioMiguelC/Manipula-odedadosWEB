@@ -11,6 +11,7 @@ import zipfile
 import math
 import re
 import concurrent.futures
+from datetime import datetime
 
 # =============================================================================
 # CONFIGURAÇÕES GERAIS E CONSTANTES
@@ -32,6 +33,20 @@ COL_IBGE = 'Codigo IBGE'
 # =============================================================================
 # FUNÇÕES DE APOIO E CACHE
 # =============================================================================
+def validar_transportadora(cnpj, nome):
+    c = str(cnpj).strip().lower() if cnpj else ""
+    n = str(nome).strip().lower() if nome else ""
+    if not c or c == "preencher aqui" or not n or n == "preencher aqui":
+        return False
+    return True
+
+def formatar_nome_arquivo(base_nome, nome_transp, extensao="xlsx"):
+    data_hoje = datetime.now().strftime("%d-%m-%Y")
+    transp_limpo = re.sub(r'[^\w\.-]', '_', str(nome_transp).strip()).strip('_')
+    if not transp_limpo or transp_limpo.lower() == "preencher_aqui":
+        transp_limpo = "Transportadora"
+    return f"{transp_limpo}_{base_nome}_{data_hoje}.{extensao}"
+
 def normalizar(texto):
     if pd.isna(texto): return ""
     texto = str(texto).strip().upper()
@@ -658,11 +673,25 @@ st.title("📦 Ferramentas Logísticas")
 
 with st.sidebar:
     st.header("⚙️ Configurações Padrão")
-    st.download_button(label="📥 Baixar Modelo Base (Vazio)", data=gerar_modelo_base_vazio(), file_name="Base_de_Origem_Template.xlsx", use_container_width=True)
-    st.download_button(label="📥 Baixar Modelo CEP (Vazio)", data=gerar_modelo_cep_vazio(), file_name="Modelo CEP.xlsx", use_container_width=True)
-    st.divider()
     cnpj_global = st.text_input("CNPJ Transportadora Padrão", value="Preencher aqui")
     nome_global = st.text_input("Nome Transportadora Padrão", value="Preencher aqui")
+    
+    if not validar_transportadora(cnpj_global, nome_global):
+        st.warning("⚠️ Preencha o CNPJ e o Nome da Transportadora para liberar o processamento.")
+    
+    st.divider()
+    st.download_button(
+        label="📥 Baixar Modelo Base (Vazio)", 
+        data=gerar_modelo_base_vazio(), 
+        file_name=formatar_nome_arquivo("Base_de_Origem_Template", nome_global, "xlsx"), 
+        use_container_width=True
+    )
+    st.download_button(
+        label="📥 Baixar Modelo CEP (Vazio)", 
+        data=gerar_modelo_cep_vazio(), 
+        file_name=formatar_nome_arquivo("Modelo_CEP_Template", nome_global, "xlsx"), 
+        use_container_width=True
+    )
     
     st.divider()
     if st.button("Atualizar Cache IBGE", use_container_width=True):
@@ -725,57 +754,60 @@ with tab_cep:
 
     col_btn_cep1, col_btn_cep2 = st.columns([2, 1])
     if col_btn_cep1.button("🚀 PROCESSAR CEPS & CONSULTAR CORREIOS", use_container_width=True):
-        lista_pares = []
-
-        # 1. Obter dados das text areas
-        linhas_ini = [l.strip() for l in txt_cep_ini.split('\n') if l.strip()]
-        linhas_fim = [l.strip() for l in txt_cep_fim.split('\n') if l.strip()]
-
-        for i, c_ini in enumerate(linhas_ini):
-            c_fim = linhas_fim[i] if i < len(linhas_fim) else c_ini
-            lista_pares.append((c_ini, c_fim))
-
-        # 2. Obter dados do upload se enviado
-        if file_cep_up is not None:
-            try:
-                ext = file_cep_up.name.split('.')[-1].lower()
-                if ext in ['xlsx', 'xls']:
-                    df_up = pd.read_excel(file_cep_up)
-                else:
-                    df_up = pd.read_csv(file_cep_up)
-
-                cols = [str(c).upper() for c in df_up.columns]
-                col_ini_idx = next((i for i, c in enumerate(cols) if 'INI' in c or 'CEP' in c), 0)
-                col_fim_idx = next((i for i, c in enumerate(cols) if 'FIM' in c or 'FINAL' in c), None)
-
-                for _, row in df_up.iterrows():
-                    val_ini = str(row.iloc[col_ini_idx]) if len(row) > col_ini_idx else ""
-                    val_fim = str(row.iloc[col_fim_idx]) if col_fim_idx is not None and len(row) > col_fim_idx else val_ini
-                    if val_ini and val_ini.lower() != "nan":
-                        lista_pares.append((val_ini, val_fim))
-            except Exception as e_up:
-                st.error(f"Erro ao ler arquivo de CEPs: {e_up}")
-
-        if not lista_pares:
-            st.warning("⚠️ Cole os CEPs nas caixas de texto acima ou envie um arquivo para processar.")
+        if not validar_transportadora(cnpj_global, nome_global):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
         else:
-            p_bar = st.progress(0, text="Iniciando consulta de CEPs...")
-            try:
-                out_cep_bytes, df_resumo = processar_modelo_cep(lista_pares, file_modelo=ARQUIVO_MODELO_CEP, progress_bar=p_bar)
-                st.session_state['out_modelo_cep'] = out_cep_bytes
-                st.session_state['df_resumo_cep'] = df_resumo
-                p_bar.progress(1.0, text="Concluído!")
+            lista_pares = []
 
-                sucessos = len(df_resumo[df_resumo['Status'] != 'Não Encontrado'])
-                st.success(f"✅ Processamento concluído! {sucessos}/{len(df_resumo)} CEPs localizados com sucesso.")
-            except Exception as e_proc:
-                st.error(f"Erro durante o processamento: {e_proc}")
+            # 1. Obter dados das text areas
+            linhas_ini = [l.strip() for l in txt_cep_ini.split('\n') if l.strip()]
+            linhas_fim = [l.strip() for l in txt_cep_fim.split('\n') if l.strip()]
+
+            for i, c_ini in enumerate(linhas_ini):
+                c_fim = linhas_fim[i] if i < len(linhas_fim) else c_ini
+                lista_pares.append((c_ini, c_fim))
+
+            # 2. Obter dados do upload se enviado
+            if file_cep_up is not None:
+                try:
+                    ext = file_cep_up.name.split('.')[-1].lower()
+                    if ext in ['xlsx', 'xls']:
+                        df_up = pd.read_excel(file_cep_up)
+                    else:
+                        df_up = pd.read_csv(file_cep_up)
+
+                    cols = [str(c).upper() for c in df_up.columns]
+                    col_ini_idx = next((i for i, c in enumerate(cols) if 'INI' in c or 'CEP' in c), 0)
+                    col_fim_idx = next((i for i, c in enumerate(cols) if 'FIM' in c or 'FINAL' in c), None)
+
+                    for _, row in df_up.iterrows():
+                        val_ini = str(row.iloc[col_ini_idx]) if len(row) > col_ini_idx else ""
+                        val_fim = str(row.iloc[col_fim_idx]) if col_fim_idx is not None and len(row) > col_fim_idx else val_ini
+                        if val_ini and val_ini.lower() != "nan":
+                            lista_pares.append((val_ini, val_fim))
+                except Exception as e_up:
+                    st.error(f"Erro ao ler arquivo de CEPs: {e_up}")
+
+            if not lista_pares:
+                st.warning("⚠️ Cole os CEPs nas caixas de texto acima ou envie um arquivo para processar.")
+            else:
+                p_bar = st.progress(0, text="Iniciando consulta de CEPs...")
+                try:
+                    out_cep_bytes, df_resumo = processar_modelo_cep(lista_pares, file_modelo=ARQUIVO_MODELO_CEP, progress_bar=p_bar)
+                    st.session_state['out_modelo_cep'] = out_cep_bytes
+                    st.session_state['df_resumo_cep'] = df_resumo
+                    p_bar.progress(1.0, text="Concluído!")
+
+                    sucessos = len(df_resumo[df_resumo['Status'] != 'Não Encontrado'])
+                    st.success(f"✅ Processamento concluído! {sucessos}/{len(df_resumo)} CEPs localizados com sucesso.")
+                except Exception as e_proc:
+                    st.error(f"Erro durante o processamento: {e_proc}")
 
     if col_btn_cep2.button("📥 Baixar Modelo CEP (Vazio)", use_container_width=True):
         st.download_button(
             label="📥 Confirmar Download Modelo Vazio",
             data=gerar_modelo_cep_vazio(),
-            file_name="Modelo CEP.xlsx",
+            file_name=formatar_nome_arquivo("Modelo_CEP_Vazio", nome_global, "xlsx"),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -788,7 +820,7 @@ with tab_cep:
         st.download_button(
             label="📥 BAIXAR PLANILHA CADASTRO CEP PREENCHIDA (.XLSX)",
             data=st.session_state['out_modelo_cep'],
-            file_name="Cadastro CEP Preenchido.xlsx",
+            file_name=formatar_nome_arquivo("Cadastro_CEP_Preenchido", nome_global, "xlsx"),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -818,11 +850,18 @@ with tab1:
 
     file_ibge = st.file_uploader("Planilha de Base", type=["xlsx"], key="ibge_file")
     if file_ibge and st.button("Processar IBGE"):
-        out_bytes, exatos, aprox, nao_enc = processar_ibge(file_ibge)
-        st.session_state['out_ibge'] = out_bytes
-        st.success(f"✅ Sucesso! Exatos: {exatos} | IA: {aprox}")
+        if not validar_transportadora(cnpj_global, nome_global):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
+        else:
+            out_bytes, exatos, aprox, nao_enc = processar_ibge(file_ibge)
+            st.session_state['out_ibge'] = out_bytes
+            st.success(f"✅ Sucesso! Exatos: {exatos} | IA: {aprox}")
     if 'out_ibge' in st.session_state:
-        st.download_button("📥 Baixar Arquivo IBGE", data=st.session_state['out_ibge'], file_name="Base_IBGE_Preenchida.xlsx")
+        st.download_button(
+            "📥 Baixar Arquivo IBGE", 
+            data=st.session_state['out_ibge'], 
+            file_name=formatar_nome_arquivo("Base_IBGE_Preenchida", nome_global, "xlsx")
+        )
 
 # --- ABA 2: Prazos e Frequência ---
 with tab2:
@@ -840,10 +879,17 @@ with tab2:
 
     c1, c2 = st.columns(2); f_dest = c1.file_uploader("Planilha DESTINO", type=["xlsx"]); f_base = c2.file_uploader("BASE", type=["xlsx"])
     if f_dest and f_base and st.button("Processar Prazos"):
-        out, at = processar_prazos(f_dest, f_base)
-        st.session_state['out_prazos'] = out; st.success(f"✅ {at} cidades atualizadas!")
+        if not validar_transportadora(cnpj_global, nome_global):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
+        else:
+            out, at = processar_prazos(f_dest, f_base)
+            st.session_state['out_prazos'] = out; st.success(f"✅ {at} cidades atualizadas!")
     if 'out_prazos' in st.session_state:
-        st.download_button("📥 Baixar Destino", data=st.session_state['out_prazos'], file_name="Destino_Prazos.xlsx")
+        st.download_button(
+            "📥 Baixar Destino", 
+            data=st.session_state['out_prazos'], 
+            file_name=formatar_nome_arquivo("Destino_Prazos", nome_global, "xlsx")
+        )
 
 # --- ABA 3: Criar Regiões ---
 with tab3:
@@ -866,13 +912,18 @@ with tab3:
 
     f_reg = st.file_uploader("Base de Prazos", type=["xlsx"], key="reg_up")
     if f_reg and st.button("Criar Regiões"):
-        if not cnpj_global: st.warning("Preencha o CNPJ lateral")
+        if not validar_transportadora(cnpj_global, nome_global):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
         else:
             out = processar_regiao(cnpj_global, f_reg, ARQUIVO_MODELO_REGIAO)
             st.session_state['out_regiao'] = out
             st.success("✅ Regiões criadas!")
     if 'out_regiao' in st.session_state:
-        st.download_button("📥 Baixar Regiões", data=st.session_state['out_regiao'], file_name=f"Regioes_{nome_global}.xlsx")
+        st.download_button(
+            "📥 Baixar Regiões", 
+            data=st.session_state['out_regiao'], 
+            file_name=formatar_nome_arquivo("Regioes", nome_global, "xlsx")
+        )
 
 # --- ABA 4: Gerar Rotas ---
 with tab4:
@@ -916,8 +967,10 @@ with tab4:
         valor_origem = col4.text_input("Nome da Região de Origem")
     
     if file_modelo_regioes and st.button("Gerar Rotas"):
-        if not cnpj_rota or not valor_origem:
-            st.warning("⚠️ CNPJ e Origem são obrigatórios.")
+        if not validar_transportadora(cnpj_rota, nome_transp_rota):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora antes de processar!")
+        elif not valor_origem:
+            st.warning("⚠️ Origem é obrigatória.")
         elif not os.path.exists(ARQUIVO_MODELO_ROTA):
             st.error(f"⚠️ O arquivo original '{ARQUIVO_MODELO_ROTA}' não foi encontrado na pasta do projeto!")
         else:
@@ -934,9 +987,7 @@ with tab4:
                         ARQUIVO_MODELO_ROTA
                     )
                     st.session_state['out_rotas'] = out_bytes
-                    
-                    nome_sugerido_rota = f"Rotas_{nome_transp_rota.strip()}.xlsx" if nome_transp_rota.strip() else "Rotas_Preenchidas.xlsx"
-                    st.session_state['nome_arq_rota'] = nome_sugerido_rota
+                    st.session_state['nome_arq_rota'] = formatar_nome_arquivo("Rotas_Preenchidas", nome_transp_rota, "xlsx")
                     
                     st.success("✅ Rotas estruturadas com sucesso dentro do modelo original!")
                 except Exception as e:
@@ -946,7 +997,7 @@ with tab4:
         st.download_button(
             label="📥 Baixar Planilha de Rotas Preenchida", 
             data=st.session_state['out_rotas'], 
-            file_name=st.session_state.get('nome_arq_rota', 'Rotas_Preenchidas.xlsx'), 
+            file_name=st.session_state.get('nome_arq_rota', formatar_nome_arquivo("Rotas_Preenchidas", nome_transp_rota, "xlsx")), 
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -962,9 +1013,17 @@ with tab5:
 
     f_sn = st.file_uploader("Planilha S/N", type=["xlsx"])
     if f_sn and st.button("Converter S/N"):
-        st.session_state['out_sn'] = converter_freq(f_sn); st.success("Convertido!")
+        if not validar_transportadora(cnpj_global, nome_global):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
+        else:
+            st.session_state['out_sn'] = converter_freq(f_sn)
+            st.success("Convertido!")
     if 'out_sn' in st.session_state:
-        st.download_button("📥 Baixar S/N", data=st.session_state['out_sn'], file_name="S_N_Convertido.xlsx")
+        st.download_button(
+            "📥 Baixar S/N", 
+            data=st.session_state['out_sn'], 
+            file_name=formatar_nome_arquivo("S_N_Convertido", nome_global, "xlsx")
+        )
 
 # --- ABA 6: Converter STQQS ---
 with tab6:
@@ -978,9 +1037,17 @@ with tab6:
 
     f_st = st.file_uploader("Planilha STQQS", type=["xlsx"])
     if f_st and st.button("Converter STQQS"):
-        st.session_state['out_stqqs'] = converter_freq_txt(f_st); st.success("Convertido!")
+        if not validar_transportadora(cnpj_global, nome_global):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
+        else:
+            st.session_state['out_stqqs'] = converter_freq_txt(f_st)
+            st.success("Convertido!")
     if 'out_stqqs' in st.session_state:
-        st.download_button("📥 Baixar STQQS", data=st.session_state['out_stqqs'], file_name="STQQS_Convertido.xlsx")
+        st.download_button(
+            "📥 Baixar STQQS", 
+            data=st.session_state['out_stqqs'], 
+            file_name=formatar_nome_arquivo("STQQS_Convertido", nome_global, "xlsx")
+        )
 
 # --- ABA 7: RESTRIÇÕES POR PESSOAS ---
 with tab7:
@@ -1011,7 +1078,9 @@ with tab7:
     texto_rest = st.text_area("Dados:", height=250, placeholder="Ex: 12345678000100 EMPRESA LTDA 250,00", key="txt_rest")
 
     if st.button("🚀 PROCESSAR RESTRIÇÕES POR PESSOAS", use_container_width=True):
-        if not os.path.exists(ARQUIVO_MODELO_TDE):
+        if not validar_transportadora(cnpj_global, nome_global):
+            st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
+        elif not os.path.exists(ARQUIVO_MODELO_TDE):
             st.error(f"Arquivo '{ARQUIVO_MODELO_TDE}' não encontrado na pasta do projeto!")
         elif not texto_rest.strip():
             st.warning("Cole os dados para processar.")
@@ -1038,7 +1107,7 @@ with tab7:
         st.download_button(
             label="📥 BAIXAR ARQUIVOS GERADOS (ZIP)",
             data=st.session_state['zip_rest'],
-            file_name=f"Restricoes_{categoria_fleg}.zip",
+            file_name=formatar_nome_arquivo(f"Restricoes_{categoria_fleg}", nome_global, "zip"),
             mime="application/zip",
             use_container_width=True
         )
