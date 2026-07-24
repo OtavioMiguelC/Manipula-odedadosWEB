@@ -436,7 +436,7 @@ def processar_prazos(file_destino, file_base):
     output.seek(0)
     return output, cidades_atualizadas
 
-def processar_regiao(cnpj, file_or_df, file_modelo):
+def processar_regiao(cnpj, file_or_df, file_modelo, limite_linhas=15000, nome_transp=""):
     if isinstance(file_or_df, pd.DataFrame):
         df_prazos = file_or_df.copy()
     else:
@@ -446,19 +446,8 @@ def processar_regiao(cnpj, file_or_df, file_modelo):
     df_prazos = df_prazos[df_prazos['Nome da Região'].notna() & (df_prazos['Nome da Região'].str.upper() != 'NAN') & (df_prazos['Nome da Região'] != '')]
     
     df_prazos['NomeRegiao'] = df_prazos['Nome da Região'].str.upper()
-    wb_modelo = load_workbook(file_modelo)
-    ws_regioes = wb_modelo['regioes']
-    ws_localizacoes = wb_modelo['localizacoes_atendidas']
-
-    for ws in [ws_regioes, ws_localizacoes]:
-        for row in ws.iter_rows(min_row=5, max_row=ws.max_row):
-            for cell in row: cell.value = None
-
-    for i, nome_regiao in enumerate(df_prazos['NomeRegiao'].unique(), start=5):
-        ws_regioes[f'B{i}'] = cnpj
-        ws_regioes[f'C{i}'] = nome_regiao
-        ws_regioes[f'D{i}'] = "VERDADEIRO"
-
+    total_linhas = len(df_prazos)
+    
     # Mapeamento dinâmico de colunas de CEP e IBGE
     col_map = {str(col).strip().upper(): col for col in df_prazos.columns}
     col_cep_ini = next((col_map[c] for c in col_map if 'CEP' in c and ('INI' in c or 'INICIAL' in c)), None)
@@ -468,30 +457,90 @@ def processar_regiao(cnpj, file_or_df, file_modelo):
     col_cep_fim = next((col_map[c] for c in col_map if 'CEP' in c and ('FIM' in c or 'FINAL' in c)), None)
     col_ibge = next((col_map[c] for c in col_map if 'IBGE' in c), None)
 
-    for i, (_, row) in enumerate(df_prazos.iterrows(), start=5):
-        ws_localizacoes[f'B{i}'] = row['NomeRegiao']
-        
-        # Extração dos CEPs e IBGE da linha
-        val_cep_ini = limpar_cep(row.get(col_cep_ini, "")) if col_cep_ini else ""
-        val_cep_fim = limpar_cep(row.get(col_cep_fim, "")) if col_cep_fim else val_cep_ini
-        
-        val_ibge = str(row.get(col_ibge, "")).split('.')[0].strip() if col_ibge and pd.notna(row.get(col_ibge)) else ""
-        if val_ibge == "nan": val_ibge = ""
+    # Caso 1: Total de linhas <= limite (Gera um único arquivo Excel)
+    if total_linhas <= limite_linhas:
+        wb_modelo = load_workbook(file_modelo)
+        ws_regioes = wb_modelo['regioes']
+        ws_localizacoes = wb_modelo['localizacoes_atendidas']
 
-        # Preenchimento no Modelo Região Lincros:
-        # B: Região | C: CEP Inicial | D: CEP Final | E: Código IBGE
-        if val_cep_ini:
-            ws_localizacoes[f'C{i}'] = val_cep_ini
-            ws_localizacoes[f'D{i}'] = val_cep_fim if val_cep_fim else val_cep_ini
-            if val_ibge:
+        for ws in [ws_regioes, ws_localizacoes]:
+            for row in ws.iter_rows(min_row=5, max_row=ws.max_row):
+                for cell in row: cell.value = None
+
+        for i, nome_regiao in enumerate(df_prazos['NomeRegiao'].unique(), start=5):
+            ws_regioes[f'B{i}'] = cnpj
+            ws_regioes[f'C{i}'] = nome_regiao
+            ws_regioes[f'D{i}'] = "VERDADEIRO"
+
+        for i, (_, row) in enumerate(df_prazos.iterrows(), start=5):
+            ws_localizacoes[f'B{i}'] = row['NomeRegiao']
+            
+            val_cep_ini = limpar_cep(row.get(col_cep_ini, "")) if col_cep_ini else ""
+            val_cep_fim = limpar_cep(row.get(col_cep_fim, "")) if col_cep_fim else val_cep_ini
+            
+            val_ibge = str(row.get(col_ibge, "")).split('.')[0].strip() if col_ibge and pd.notna(row.get(col_ibge)) else ""
+            if val_ibge == "nan": val_ibge = ""
+
+            if val_cep_ini:
+                ws_localizacoes[f'C{i}'] = val_cep_ini
+                ws_localizacoes[f'D{i}'] = val_cep_fim if val_cep_fim else val_cep_ini
+                if val_ibge:
+                    ws_localizacoes[f'E{i}'] = val_ibge
+            elif val_ibge:
                 ws_localizacoes[f'E{i}'] = val_ibge
-        elif val_ibge:
-            ws_localizacoes[f'E{i}'] = val_ibge
 
-    output = io.BytesIO()
-    wb_modelo.save(output)
-    output.seek(0)
-    return output
+        output = io.BytesIO()
+        wb_modelo.save(output)
+        output.seek(0)
+        return output, False, 1, total_linhas
+
+    # Caso 2: Total de linhas > limite (Fraciona em múltiplos arquivos Excel dentro de um arquivo ZIP)
+    num_partes = math.ceil(total_linhas / limite_linhas)
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for idx_parte in range(num_partes):
+            sub_df = df_prazos.iloc[idx_parte * limite_linhas : (idx_parte + 1) * limite_linhas]
+            
+            wb_modelo = load_workbook(file_modelo)
+            ws_regioes = wb_modelo['regioes']
+            ws_localizacoes = wb_modelo['localizacoes_atendidas']
+
+            for ws in [ws_regioes, ws_localizacoes]:
+                for row in ws.iter_rows(min_row=5, max_row=ws.max_row):
+                    for cell in row: cell.value = None
+
+            for i, nome_regiao in enumerate(sub_df['NomeRegiao'].unique(), start=5):
+                ws_regioes[f'B{i}'] = cnpj
+                ws_regioes[f'C{i}'] = nome_regiao
+                ws_regioes[f'D{i}'] = "VERDADEIRO"
+
+            for i, (_, row) in enumerate(sub_df.iterrows(), start=5):
+                ws_localizacoes[f'B{i}'] = row['NomeRegiao']
+                
+                val_cep_ini = limpar_cep(row.get(col_cep_ini, "")) if col_cep_ini else ""
+                val_cep_fim = limpar_cep(row.get(col_cep_fim, "")) if col_cep_fim else val_cep_ini
+                
+                val_ibge = str(row.get(col_ibge, "")).split('.')[0].strip() if col_ibge and pd.notna(row.get(col_ibge)) else ""
+                if val_ibge == "nan": val_ibge = ""
+
+                if val_cep_ini:
+                    ws_localizacoes[f'C{i}'] = val_cep_ini
+                    ws_localizacoes[f'D{i}'] = val_cep_fim if val_cep_fim else val_cep_ini
+                    if val_ibge:
+                        ws_localizacoes[f'E{i}'] = val_ibge
+                elif val_ibge:
+                    ws_localizacoes[f'E{i}'] = val_ibge
+
+            excel_buffer = io.BytesIO()
+            wb_modelo.save(excel_buffer)
+            excel_buffer.seek(0)
+            
+            nome_arq_parte = formatar_nome_arquivo(f"Regioes_Parte_{idx_parte + 1}_de_{num_partes}", nome_transp, "xlsx")
+            zip_file.writestr(nome_arq_parte, excel_buffer.read())
+
+    zip_buffer.seek(0)
+    return zip_buffer, True, num_partes, total_linhas
 
 def processar_rotas(escolha_rota, cnpj_transportadora, nome_transportadora, desc_adicional, tipo_origem, valor_origem, file_modelo_regioes, file_template_rota):
     wb_modelo_regioes = load_workbook(file_modelo_regioes)
@@ -910,20 +959,47 @@ with tab3:
         - Aba **`localizacoes_atendidas`**: Associa cada região ao CEP Inicial/Final ou Código IBGE.
         """)
 
+    st.info("💡 **Fracionamento automático**: Se a planilha base possuir mais de 15.000 linhas de localizações, o sistema dividirá automaticamente o resultado em múltiplos arquivos Excel com até 15.000 linhas cada, empacotados em um único arquivo `.ZIP`.")
+    
+    limite_linhas_reg = st.number_input("Limite máximo de linhas por arquivo:", min_value=1000, max_value=50000, value=15000, step=1000, help="O padrão é 15.000 linhas por arquivo Excel.")
+
     f_reg = st.file_uploader("Base de Prazos", type=["xlsx"], key="reg_up")
     if f_reg and st.button("Criar Regiões"):
         if not validar_transportadora(cnpj_global, nome_global):
             st.error("⚠️ Bloqueado: Preencha o CNPJ e o Nome da Transportadora na barra lateral antes de processar!")
         else:
-            out = processar_regiao(cnpj_global, f_reg, ARQUIVO_MODELO_REGIAO)
-            st.session_state['out_regiao'] = out
-            st.success("✅ Regiões criadas!")
+            with st.spinner("Estruturando regiões e verificando limite de linhas..."):
+                out_reg, eh_zip, num_partes, total_lin = processar_regiao(
+                    cnpj_global, f_reg, ARQUIVO_MODELO_REGIAO, limite_linhas=int(limite_linhas_reg), nome_transp=nome_global
+                )
+                st.session_state['out_regiao'] = out_reg
+                st.session_state['regiao_eh_zip'] = eh_zip
+                st.session_state['regiao_num_partes'] = num_partes
+                st.session_state['regiao_total_linhas'] = total_lin
+
+                if eh_zip:
+                    st.success(f"✅ Processamento concluído! {total_lin} linhas divididas em {num_partes} arquivos Excel (máximo {limite_linhas_reg:,} linhas cada) em um arquivo ZIP.")
+                else:
+                    st.success(f"✅ Regiões criadas com sucesso ({total_lin} linhas)!")
+
     if 'out_regiao' in st.session_state:
-        st.download_button(
-            "📥 Baixar Regiões", 
-            data=st.session_state['out_regiao'], 
-            file_name=formatar_nome_arquivo("Regioes", nome_global, "xlsx")
-        )
+        eh_zip = st.session_state.get('regiao_eh_zip', False)
+        if eh_zip:
+            st.download_button(
+                "📥 BAIXAR REGIÕES FRACIONADAS (.ZIP)", 
+                data=st.session_state['out_regiao'], 
+                file_name=formatar_nome_arquivo("Regioes_Fracionadas", nome_global, "zip"),
+                mime="application/zip",
+                use_container_width=True
+            )
+        else:
+            st.download_button(
+                "📥 BAIXAR PLANILHA DE REGIÕES (.XLSX)", 
+                data=st.session_state['out_regiao'], 
+                file_name=formatar_nome_arquivo("Regioes", nome_global, "xlsx"),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
 # --- ABA 4: Gerar Rotas ---
 with tab4:
